@@ -19,11 +19,6 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from flask import Flask, render_template, request 
 
-########################################## AMBIENTE ############################################
-
-load_dotenv()
-s3 = boto3.client("s3")
-
 ######################################## CARGA VARIABLES #######################################
 
 S3_SA_KEY = os.getenv("S3_SA_KEY")
@@ -31,6 +26,11 @@ SHEET_ID  = os.getenv("SHEET_ID")
 SCOPES    = json.loads(os.getenv("SCOPES"))
 S3_BUCKET = os.getenv("S3_BUCKET")
 ONE_DRIVE = os.getenv("ONE_DRIVE")
+AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
+AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
+
+load_dotenv()
+s3 = boto3.client("s3",aws_access_key_id=AWS_ACCESS_KEY,aws_secret_access_key=AWS_SECRET_KEY)
 
 ################################# ACCESO A GOOGLE SHEETS #######################################
 
