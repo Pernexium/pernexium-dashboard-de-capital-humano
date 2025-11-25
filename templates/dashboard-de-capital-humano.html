@@ -1,0 +1,2963 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pernexium – Dashboard de Capital Humano</title>
+  <link rel="icon" type="image/png"href="{{ url_for('static', filename='logos/PXM isotipo 3.png', v=2) }}">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .gradient-bg {background: linear-gradient(135deg, #0c376c 0%, #1e56a0 100%);}
+    .progress-bar { height: 8px; border-radius: 4px; background-color: #e0e0e0; }
+    .progress-fill { height: 100%; border-radius: 4px; background-color: #0c376c; }
+    .chart-container { position: relative; height: 250px; }
+    .lead-card:hover { transform: translateY(-5px); box-shadow: 0 10px 20px rgba(0,0,0,0.1); }
+    .animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    .comment-col {max-width: 900px;white-space: normal;}
+    #all-leads-table_wrapper .dataTables_length{display:none;}
+    #all-leads-table_filter{
+      display:flex;align-items:center;gap:.5rem;
+      margin:0;flex-shrink:0;z-index:20;
+    }
+    #all-leads-table_filter label{display:flex;align-items:center;gap:.5rem;color:#fff;font-weight:500;}
+    #all-leads-table_filter label::before{content:'';}
+    #all-leads-table_filter input{
+      padding:.25rem .55rem;border-radius:.45rem;border:none;outline:none;
+      min-width:11rem;
+      background:rgba(255,255,255,.95);color:#0c376c;font-size:.85rem;
+    }
+    #all-leads-table_wrapper .dataTables_info,
+    #all-leads-table_wrapper .dataTables_paginate{
+      width:100%;display:flex;justify-content:center;align-items:center;
+      gap:.5rem;padding-top:1rem;
+    }
+    #all-leads-table_wrapper .dataTables_paginate .paginate_button{
+      display:inline-flex;align-items:center;justify-content:center;
+      margin:0 .125rem;min-width:1.9rem;height:1.9rem;padding:0 .5rem;
+      font-size:.8rem;border-radius:.45rem;cursor:pointer;
+      background:#0c376c;color:#fff;transition:background .15s;
+    }
+    #all-leads-table_wrapper .dataTables_paginate .paginate_button:hover{
+      background:#1e56a0;
+    }
+    #all-leads-table_wrapper .dataTables_paginate .paginate_button.current{
+      background:#1e56a0;font-weight:600;
+    }
+    @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.5;} }
+    .funnel-card {
+      border-radius: 1.25rem;
+      background: radial-gradient(circle at top left, #f9fafb 0, #ffffff 42%, #f1f5f9 100%);
+      box-shadow: 0 24px 55px rgba(15,23,42,0.14);
+      border: 1px solid rgba(148,163,184,0.7);
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem; 
+      position: relative;
+      overflow: hidden;
+    }
+    .funnel-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(circle at top right, rgba(37,99,235,0.08), transparent 55%);
+      opacity: 0.9;
+    }
+    .funnel-card > * {
+      position: relative;
+      z-index: 1;
+    }
+    .funnel-stage {
+      position: relative;
+      height: 32px;        
+      margin: 4px 0;      
+      border-radius: 9999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.70rem;
+      font-weight: 600;
+      color: #ffffff;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+      overflow: hidden;
+    }
+    .funnel-stage::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to right, rgba(255,255,255,0.22), transparent 45%);
+      mix-blend-mode: screen;
+      opacity: 0.7;
+      pointer-events: none;
+    }
+    .funnel-stage:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 30px rgba(15,23,42,0.2);
+      opacity: 0.98;
+    }
+    .funnel-stage-label {
+      position: absolute;
+      left: -0.5rem;
+      transform: translateX(-100%);
+      font-size: 0.65rem;
+      color: #64748b;
+      text-align: right;
+      width: 5.5rem;
+      line-height: 1.1;
+    }
+    .funnel-stage-value {
+      position: absolute;
+      right: -0.5rem;
+      transform: translateX(100%);
+      font-size: 0.65rem;
+      color: #0f172a;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .funnel-pyramid-wrapper {
+      position: relative;
+      padding: 0 0.75rem 0 0;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .funnel-badge {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+    }
+    .funnel-legend {
+      margin-top: 0.4rem;
+      padding-top: 0.25rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem 0.75rem;
+      font-size: 0.70rem;
+      justify-content: flex-start;
+    }
+    .funnel-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      color: #64748b;
+      white-space: nowrap;
+      font-size: 0.65rem;
+      height: 32px;       
+      margin: 4px 0;      
+    }
+    .funnel-legend-color {
+      width: 0.55rem;
+      height: 0.55rem;
+      border-radius: 9999px;
+      border: 1px solid rgba(15,23,42,0.10);
+    }
+    .coverage-chart-container {
+      position: relative;
+      height: 100%;
+      width: 100%;
+    }
+    #coverage-chart {
+      width: 100% !important;
+      height: 100% !important;
+    }
+  </style>
+  <link rel="stylesheet" 
+        href="https://cdn.datatables.net/1.13.8/css/dataTables.tailwindcss.min.css"/>
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-800">
+  <!-- ================= HEADER ================= -->
+  <header class="bg-[#0c376c] text-white shadow-lg">
+    <div class="container mx-auto px-4 py-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div class="flex items-center space-x-4">
+        <img src="{{ url_for('static', filename='logos/DIR logotipo 1.png') }}"
+            alt="Logo Do It Right"
+            class="h-14 w-auto select-none drop-shadow-md"
+            style="filter: drop-shadow(0 2px 4px rgba(67,82,247,0.35));" />
+        <span class="text-1xl font-extrabold leading-none select-none opacity-70">X</span>
+        <img src="{{ url_for('static', filename='logos/PXM isotipo 41.png') }}"
+            alt="Logo Pernexium"
+            class="h-20 w-auto select-none drop-shadow-md" />
+        <div class="ml-4">
+          <h1 class="text-2xl sm:text-3xl font-bold leading-tight whitespace-nowrap">
+            Dashboard de Capital Humano
+          </h1>
+          <p class="text-sm sm:text-base opacity-85 whitespace-nowrap">
+            Mida la eficiencia, tiempo y conversión de su proceso de reclutamiento
+          </p>
+        </div>
+      </div>
+
+
+      <div class="flex items-center gap-3">
+        <!-- Botón Descargar -->
+        <a id="download-pdf"
+          href="javascript:void(0)"
+          class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg
+                  text-gray-200 font-medium transition
+                  hover:text-white hover:bg-white/10
+                  focus:outline-none focus:ring-2 focus:ring-white/30">
+          <i class="fas fa-download text-base"></i>
+          <span class="whitespace-nowrap">Descargar</span>
+        </a>
+
+        <!-- >>> NUEVO: Filtro universal de campaña -->
+      <form method="GET" class="flex items-center">
+        <label for="campania-select" class="sr-only">TODAS</label>
+
+        <div class="relative inline-block w-28">
+          <!-- SELECT funcional (invisible pero clickeable) -->
+          <select
+            id="campania-select"
+            name="campania"
+            class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            onchange="this.form.submit()"
+          >
+            <option value="">TODAS</option>
+            {% for c in campanias %}
+              <option value="{{ c }}" {% if campania_seleccionada == c %}selected{% endif %}>
+                {{ c }}
+              </option>
+            {% endfor %}
+          </select>
+
+          <!-- BOTÓN VISUAL -->
+          <div
+            class="inline-flex items-center justify-center gap-1
+                  w-full px-3 py-2.5 rounded-lg
+                  bg-[#174d93] text-white font-semibold text-sm
+                  shadow-sm transition
+                  hover:bg-[#0c376c]/90
+                  focus-within:ring-2 focus-within:ring-white/30"
+          >
+            <!-- favicon / icono a la izquierda -->
+            <i class="fas fa-filter text-xs"></i>
+
+            <!-- UNA sola palabra: primera palabra de la campaña -->
+            <span class="whitespace-nowrap">
+              {% if campania_seleccionada %}
+                {{ campania_seleccionada.split(' ')|first }}
+              {% else %}
+                TODAS
+              {% endif %}
+            </span>
+
+            <!-- flechita a la derecha -->
+            <i class="fas fa-chevron-down text-[10px] ml-1"></i>
+          </div>
+        </div>
+      </form>
+
+
+
+
+
+        <!-- <<< FIN NUEVO -->
+
+        <!-- Botones Activo / LEAD -->
+        <div class="inline-flex rounded-lg overflow-hidden bg-white text-[#0c376c]
+                    shadow-sm border border-white/40 text-sm font-semibold">
+          <a href="https://docs.google.com/spreadsheets/d/1p4L76t9XSde_pVUM-fYiNXpWTjJQJBHQ89ug4P_T7iE/edit?usp=sharing"  
+            target="_blank"
+            class="px-4 py-2 flex items-center gap-2 hover:bg-gray-100
+                    transition whitespace-nowrap">
+            <i class="fas fa-user-plus"></i>
+            <span>Activo</span>
+          </a>
+          <span class="w-px self-stretch bg-gray-200"></span>
+          <a href="https://onedrive.live.com/edit.aspx?resid=52DEEE19EEB6F365!s9dae9c2b6e264125ba219ce4306844cf&migratedtospo=true&redeem=aHR0cHM6Ly8xZHJ2Lm1zL3gvYy81MmRlZWUxOWVlYjZmMzY1L0VTdWNycDBtYmlWQnVpR2M1REJvUk04Qm9OUnNqVVZUOEpYb1QwdTE0bkxCR2c_ZT1jVTBJTVA&activeCell=%27Reclutamiento%27!A158&wdinitialsession=0934cc26-a2b0-2761-ddac-a0983ab70dd5&wdrldsc=24&wdrldc=1&wdrldr=AccessTokenExpiredWarningUnauthenticated%2CRefreshin"
+            target="_blank"
+            class="px-4 py-2 flex items-center gap-2 hover:bg-gray-100
+                    transition whitespace-nowrap">
+            <i class="fas fa-plus"></i>
+            <span>LEAD</span>
+          </a>
+        </div>
+      </div>
+
+    </div>
+  </header>
+  <!-- ================= CONTENIDO ================= -->
+  <main class="container mx-auto px-4 py-8">
+    <!-- KPIs -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <!-- Personal Autorizado -->
+        <div
+            class="group relative overflow-hidden bg-gradient-to-br from-white via-slate-50 to-slate-100/60
+                  rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
+                  border border-slate-200/80
+                  transition-all duration-200 hover:-translate-y-1.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.18)]
+                  cursor-pointer">
+            <div class="absolute inset-x-0 top-0 h-1 bg-[#0c376c]"></div>
+            <div class="p-6 space-y-4">
+                <div class="flex items-start justify-between gap-3 mb-1">
+                    <h3 class="text-base md:text-lg font-semibold text-slate-900 tracking-tight">
+                        Personal Autorizado
+                    </h3>
+                    <div
+                        class="mt-[-4px] p-2.5 rounded-2xl bg-[#0c376c]/10 text-[#0c376c]
+                              ring-1 ring-[#0c376c]/20 group-hover:bg-[#0c376c]/15">
+                        <i data-feather="users" class="w-5 h-5"></i>
+                    </div>
+                </div>
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-600">Estructura</span>
+                        <span class="font-semibold text-slate-900 tabular-nums" id="admin-staff">
+                            {{ plantilla_autorizada_administrativa }}
+                        </span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-600">Operación</span>
+                        <span class="font-semibold text-slate-900 tabular-nums" id="operational-staff">
+                            {{ plantilla_autorizada_operativa }}
+                        </span>
+                    </div>
+                    <div class="pt-3 mt-2 border-t border-dashed border-slate-200">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="text-xs font-semibold tracking-[0.16em] uppercase text-slate-500">
+                                Total Autorizado
+                            </span>
+                            <span class="text-2xl font-extrabold text-[#0c376c] tabular-nums" id="total-staff">
+                                {{ plantilla_autorizada_total }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- Equidad de Género -->
+        <div
+            class="group relative overflow-hidden bg-gradient-to-br from-white via-slate-50 to-slate-100/60
+                  rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
+                  border border-slate-200/80
+                  transition-all duration-200 hover:-translate-y-1.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.18)]
+                  cursor-pointer">
+            <div class="absolute inset-x-0 top-0 h-1 bg-[#0c376c]"></div>
+            <div class="p-6 space-y-4">
+                <div class="flex items-start justify-between gap-3 mb-1">
+                    <h3 class="text-base md:text-lg font-semibold text-slate-900 tracking-tight">
+                        Equidad de Género
+                    </h3>
+                    <div
+                        class="mt-[-4px] p-2 rounded-2xl bg-slate-900/5 text-slate-700
+                              ring-1 ring-slate-200 group-hover:bg-slate-900/10">
+                        <i data-feather="percent" class="w-5 h-5"></i>
+                    </div>
+                </div>
+                <div class="space-y-3 text-sm">
+                    {% for genero, cantidad in genero_cantidad.items() %}
+                        {% set porcentaje = genero_porcentaje[genero] %}
+                        {% set bar_color = '#0c376c' %}
+                        {% if genero|lower in ['femenino', 'mujer'] %}
+                            {% set bar_color = '#ec4899' %}
+                        {% elif genero|lower in ['masculino', 'hombre'] %}
+                            {% set bar_color = '#3b82f6' %}
+                        {% elif genero|lower in ['no binario', 'no-binario', 'nb'] %}
+                            {% set bar_color = '#22c55e' %}
+                        {% endif %}
+                        <div class="space-y-1.5">
+                            <div class="flex justify-between items-center gap-3">
+                                <div class="flex items-center gap-2">
+                                    <span
+                                        class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-slate-200 bg-slate-50
+                                              text-[11px] font-medium text-slate-700">
+                                        <span class="w-2 h-2 rounded-full" style="background-color: {{ bar_color }}"></span>
+                                        {{ genero }}
+                                    </span>
+                                    <span class="text-[10px] text-slate-500">
+                                        {{ cantidad }} personas
+                                    </span>
+                                </div>
+                                <span class="font-semibold text-slate-900 tabular-nums">
+                                    {{ porcentaje }}%
+                                </span>
+                            </div>
+                            <div class="w-full bg-slate-200/70 rounded-full h-2.5 overflow-hidden">
+                                <div
+                                    class="h-2.5 rounded-full transition-all duration-500 group-hover:shadow-sm"
+                                    style="
+                                        width: {{ porcentaje }}%;
+                                        background-color: {{ bar_color }};
+                                    ">
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        <!-- Nómina -->
+        <div
+            class="group relative overflow-hidden bg-gradient-to-br from-white via-slate-50 to-slate-100/60
+                  rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
+                  border border-slate-200/80
+                  transition-all duration-200 hover:-translate-y-1.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.18)]
+                  cursor-pointer">
+            <div class="absolute inset-x-0 top-0 h-1 bg-[#0c376c]"></div>
+            <div class="p-6 space-y-4">
+                <div class="flex items-start justify-between gap-3 mb-1">
+                    <h3 class="text-base md:text-lg font-semibold text-slate-900 tracking-tight">
+                        Nómina Mensual
+                    </h3>
+                    <div
+                        class="mt-[-4px] p-2.5 rounded-2xl bg-emerald-500/10 text-emerald-700
+                              ring-1 ring-emerald-500/25 group-hover:bg-emerald-500/15">
+                        <i data-feather="dollar-sign" class="w-5 h-5"></i>
+                    </div>
+                </div>
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-600">Estructura</span>
+                        <span class="font-semibold text-slate-900 tabular-nums" id="structured-payroll">
+                            ${{ "{:,.0f}".format(nomina_estructura) }}
+                        </span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-600">Operación</span>
+                        <span class="font-semibold text-slate-900 tabular-nums" id="operational-payroll">
+                            ${{ "{:,.0f}".format(nomina_operacion) }}
+                        </span>
+                    </div>
+                    <div class="pt-3 mt-2 border-t border-dashed border-slate-200">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="text-xs font-semibold tracking-[0.16em] uppercase text-slate-500">
+                                Total Nómina
+                            </span>
+                            <span class="text-2xl font-extrabold text-emerald-600 tabular-nums" id="total-payroll">
+                                ${{ "{:,.0f}".format(nomina_total_general) }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- Contratos -->
+        <div
+            class="group relative overflow-hidden bg-gradient-to-br from-white via-slate-50 to-slate-100/60
+                  rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
+                  border border-slate-200/80
+                  transition-all duration-200 hover:-translate-y-1.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.18)]
+                  cursor-pointer">
+            <div class="absolute inset-x-0 top-0 h-1 bg-[#0c376c]"></div>
+            <div class="p-6 space-y-4">
+                <div class="flex items-start justify-between gap-3 mb-1">
+                    <h3 class="text-base md:text-lg font-semibold text-slate-900 tracking-tight">
+                        Contratos
+                    </h3>
+                    <div
+                        class="mt-[-4px] p-2.5 rounded-2xl bg-sky-500/10 text-sky-700
+                              ring-1 ring-sky-500/25 group-hover:bg-sky-500/15">
+                        <i data-feather="file-text" class="w-5 h-5"></i>
+                    </div>
+                </div>
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-600">Estructura</span>
+                        <span class="font-semibold text-slate-900 tabular-nums" id="structured-contracts">
+                            {{ contratos_estructura }}
+                        </span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-600">Operación</span>
+                        <span class="font-semibold text-slate-900 tabular-nums" id="operational-contracts">
+                            {{ contratos_operacion }}
+                        </span>
+                    </div>
+                    <div class="pt-3 mt-2 border-t border-dashed border-slate-200">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="text-xs font-semibold tracking-[0.16em] uppercase text-slate-500">
+                                Total Contratos
+                            </span>
+                            <span class="text-2xl font-extrabold text-sky-600 tabular-nums" id="total-contracts">
+                                {{ contratos_total }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+     <!-- ========== FUNNEL DE RECLUTAMIENTO ========== -->
+    <section class="mt-8 flex flex-wrap gap-6">
+      <div class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)] border border-slate-200/80 p-6 w-full md:w-[520px] lg:w-[560px] xl:w-[600px]">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-4">
+          <div class="space-y-1">
+            <h2 class="text-lg md:text-xl font-semibold text-slate-900">
+              Funnel de Reclutamiento
+            </h2>
+          </div>
+          <div class="flex items-center gap-2 self-start lg:self-auto">
+            <div class="flex items-center gap-2">
+              <button
+                id="funnel-prev"
+                type="button"
+                class="flex items-center justify-center w-9 h-9 rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <i class="fas fa-chevron-left text-sm"></i>
+              </button>
+              <button
+                id="funnel-next"
+                type="button"
+                class="flex items-center justify-center w-9 h-9 rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <i class="fas fa-chevron-right text-sm"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div id="funnels-container" class="mt-2 flex justify-start"></div>
+        <div id="funnels-legend" class="funnel-legend mt-2 pt-1"></div>
+      </div>
+      <!-- COBERTURA POR CARTERA - GRÁFICA + BOTÓN DETALLE -->
+      <div
+        class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
+              border border-slate-200/80 p-6 flex-1 min-w-[320px]"
+      >
+        <div class="flex itemscenter justify-between gap-3 mb-4">
+          <div class="space-y-1">
+            <h2 class="text-lg md:text-xl font-semibold text-slate-900">
+              Cobertura de Plantilla
+            </h2>
+          </div>
+          <div class="flex items-center gap-2 justify-end">
+            <button
+              id="btn-cobertura-detalle"
+              class="font-medium text-[15px] text-[#0c376c] hover:underline"
+            >
+              Ver detalle
+            </button>
+          </div>
+        </div>
+        <div class="rounded-xl bg-white p-3 h-68 flex flex-col">
+          <div class="flex items-center justify-end mb-2 shrink-0"></div>
+          <div class="flex-1 min-h-0">
+            <div class="coverage-chart-container">
+              <canvas id="coverage-chart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- INGRESOS VS BAJAS - SEMANAL / MENSUAL -->
+      <div
+        class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
+              border border-slate-200/80 p-6 w-full"
+      >
+        <div class="flex items-center justify-between gap-3 mb-4">
+          <div class="space-y-1">
+            <h2 class="text-lg md:text-xl font-semibold text-slate-900">
+              Ingresos vs Bajas
+            </h2>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="inline-flex rounded-full border border-slate-200 bg-slate-100 text-xs p-0.5">
+              <button
+                id="ib-toggle-semanal"
+                type="button"
+                class="px-3 py-1.5 rounded-full font-medium text-slate-700 bg-[#0c376c] text-white shadow-sm"
+              >
+                Semanal
+              </button>
+              <button
+                id="ib-toggle-mensual"
+                type="button"
+                class="px-3 py-1.5 rounded-full font-medium text-slate-700 bg-slate-100"
+              >
+                Mensual
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="h-64 md:h-72">
+          <canvas id="ingresos-bajas-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- BLOQUE ALINEADO: ACUMULADO, LEADS, CANALES, PAGOS -->
+      <div class="w-full grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- INGRESOS VS BAJAS - ACUMULADO -->
+        <div
+          class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
+                border border-slate-200/80 p-6 flex-1 min-w-[320px]"
+        >
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <div class="space-y-1">
+              <h2 class="text-lg md:text-xl font-semibold text-slate-900">
+                Ingresos vs Bajas
+              </h2>
+              <p class="text-xs text-slate-500">
+                Acumulado Semanal {{ ingresos_bajas_year }}
+              </p>
+            </div>
+          </div>
+          <div class="h-56 md:h-64 lg:h-64">
+            <canvas id="ingresos-bajas-acum-chart"></canvas>
+          </div>
+        </div>
+
+        <!-- LEADS POR RECLUTADOR -->
+        <div
+          class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
+                border border-slate-200/80 p-6 flex-1 min-w-[320px]"
+        >
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <div class="space-y-1">
+              <h2 class="text-lg md:text-xl font-semibold text-slate-900">
+                LEADs
+              </h2>
+              <p class="text-xs text-slate-500">
+                Distribución mensual de LEADs por Reclutador
+              </p>
+            </div>
+          </div>
+          <div class="h-56 md:h-64 lg:h-64">
+            <canvas id="leads-chart"></canvas>
+          </div>
+        </div>
+
+        <!-- CANALES DE INGRRESO -->
+        <div
+          class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
+                border border-slate-200/80 p-6 flex-1 min-w-[320px]"
+        >
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <div class="space-y-1">
+              <h2 class="text-lg md:text-xl font-semibold text-slate-900">
+                Canales de Ingreso
+              </h2>
+            </div>
+            <div class="inline-flex rounded-full border border-slate-200 bg-slate-100 text-xs p-0.5">
+              <button
+                id="canales-toggle-plantilla"
+                type="button"
+                class="px-3 py-1.5 rounded-full font-medium bg-[#0c376c] text-white shadow-sm"
+              >
+                Plantilla
+              </button>
+              <button
+                id="canales-toggle-pauta"
+                type="button"
+                class="px-3 py-1.5 rounded-full font-medium text-slate-700 bg-slate-100"
+              >
+                Pauta
+              </button>
+            </div>
+          </div>
+          <div class="h-56 md:h-64 lg:h-72">
+            <canvas id="canales-chart"></canvas>
+          </div>
+        </div>
+        <!-- LÍNEA DE TIEMPO DE PAGOS -->
+        <div
+          class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
+                border border-slate-200/80 p-6 flex-1 min-w-[320px]"
+        >
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <div class="space-y-1">
+              <h2 class="text-lg md:text-xl font-semibold text-slate-900">
+                Inversión en Pauta
+              </h2>
+              <p class="text-xs text-slate-500">
+                Inversión en atracción de talento (MXN)
+              </p>
+            </div>
+            <div class="inline-flex rounded-full border border-slate-200 bg-slate-100 text-xs p-0.5">
+              <button
+                id="pagos-toggle-semanal"
+                type="button"
+                class="px-3 py-1.5 rounded-full font-medium text-slate-700 bg-slate-100"
+              >
+                Semanal
+              </button>
+              <button
+                id="pagos-toggle-mensual"
+                type="button"
+                class="px-3 py-1.5 rounded-full font-medium text-slate-700 bg-[#0c376c] text-white shadow-sm"
+              >
+                Mensual
+              </button>
+            </div>
+          </div>
+          <div class="h-56 md:h-64 lg:h-72">
+            <canvas id="pagos-chart"></canvas>
+          </div>
+        </div>
+
+        <!-- MOTIVOS DE BAJAS -->
+        <div
+          class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
+                border border-slate-200/80 p-6 flex-1 min-w-[320px]"
+        >
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <div class="space-y-1">
+              <h2 class="text-lg md:text-xl font-semibold text-slate-900">
+                Motivos de Bajas
+              </h2>
+            </div>
+            <!-- >>> NUEVO: Botón Ver detalle -->
+            <div class="flex items-center gap-2">
+              <button
+                id="btn-motivos-detalle"
+                type="button"
+                class="font-medium text-[15px] text-[#0c376c] hover:underline"
+              >
+                Ver detalle
+              </button>
+            </div>
+          </div>
+          <div class="h-56 md:h-64 lg:h-72">
+            <canvas id="motivos-bajas-chart"></canvas>
+          </div>
+        </div>
+
+        <!-- ANTIGÜEDAD PROMEDIO DE BAJAS -->
+        <div
+          class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
+                border border-slate-200/80 p-6 flex-1 min-w-[320px]"
+        >
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <div class="space-y-1">
+              <h2 class="text-lg md:text-xl font-semibold text-slate-900">
+                Antigüedad Promedio de Bajas
+              </h2>
+              <p class="text-xs text-slate-500">
+                Meses de antigüedad al momento de la baja
+              </p>
+            </div>
+          </div>
+          <div class="h-56 md:h-64 lg:h-72">
+            <canvas id="antiguedad-bajas-chart"></canvas>
+          </div>
+        </div>
+
+
+
+      </div>
+      <!-- FIN BLOQUE ALINEADO -->
+
+
+      <!-- MODAL DETALLE COBERTURA -->
+      <div
+        id="coverage-modal"
+        class="fixed inset-0 z-50 grid place-items-center bg-black/60 backdrop-blur-sm p-4 hidden"
+      >
+        <div class="bg-white w-full max-w-4xl rounded-2xl shadow-2xl flex flex-col border border-gray-200">
+          <div class="flex items-center justify-between px-6 py-4 gradient-bg text-white rounded-t-2xl">
+            <div class="flex items-center gap-3">
+              <img src="{{ url_for('static', filename='logos/PXM isotipo 41.png') }}"
+                  alt="Pernexium Logo"
+                  class="h-8 w-auto select-none" />
+              <div class="flex flex-col">
+                <h3 class="text-lg font-semibold tracking-wide">Cobertura por Campaña</h3>
+              </div>
+            </div>
+            <button
+              id="coverage-modal-close"
+              class="text-2xl leading-none hover:scale-110 transition-transform"
+              type="button"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="overflow-x-auto max-h-[60vh] bg-slate-50/40">
+            <table
+              id="coverage-detail-table"
+              class="min-w-full text-sm divide-y divide-gray-200"
+            >
+              <thead class="bg-[#0c376c] text-white sticky top-0 z-10">
+                <tr>
+                  <th
+                    scope="col"
+                    class="px-4 py-2 text-center font-semibold tracking-wide text-sm sort-header"
+                    data-sort-index="0"
+                    data-type="text"
+                  >
+                    <button type="button" class="inline-flex items-center gap-1 justify-center w-full">
+                      <span>Campaña</span>
+                      <span class="sort-indicator text-[10px] opacity-70">↕</span>
+                    </button>
+                  </th>
+                  <th
+                    scope="col"
+                    class="px-4 py-2 text-center font-semibold tracking-wide text-sm sort-header"
+                    data-sort-index="1"
+                    data-type="number"
+                  >
+                    <button type="button" class="inline-flex items-center gap-1 justify-center w-full">
+                      <span>Plantilla Autorizada</span>
+                      <span class="sort-indicator text-[10px] opacity-70">↕</span>
+                    </button>
+                  </th>
+                  <th
+                    scope="col"
+                    class="px-4 py-2 text-center font-semibold tracking-wide text-sm sort-header"
+                    data-sort-index="2"
+                    data-type="number"
+                  >
+                    <button type="button" class="inline-flex items-center gap-1 justify-center w-full">
+                      <span>Total Activos</span>
+                      <span class="sort-indicator text-[10px] opacity-70">↕</span>
+                    </button>
+                  </th>
+                  <th
+                    scope="col"
+                    class="px-4 py-2 text-center font-semibold tracking-wide text-sm sort-header"
+                    data-sort-index="3"
+                    data-type="number"
+                  >
+                    <button type="button" class="inline-flex items-center gap-1 justify-center w-full">
+                      <span>Personal Faltante</span>
+                      <span class="sort-indicator text-[10px] opacity-70">↕</span>
+                    </button>
+                  </th>
+                  <th
+                    scope="col"
+                    class="px-4 py-2 text-center font-semibold tracking-wide text-sm sort-header"
+                    data-sort-index="4"
+                    data-type="text"
+                  >
+                    <button type="button" class="inline-flex items-center gap-1 justify-center w-full">
+                      <span>Mes</span>
+                      <span class="sort-indicator text-[10px] opacity-70">↕</span>
+                    </button>
+                  </th>
+                  <th
+                    scope="col"
+                    class="px-4 py-2 text-center font-semibold tracking-wide text-sm sort-header"
+                    data-sort-index="5"
+                    data-type="number"
+                  >
+                    <button type="button" class="inline-flex items-center gap-1 justify-center w-full">
+                      <span>Año</span>
+                      <span class="sort-indicator text-[10px] opacity-70">↕</span>
+                    </button>
+                  </th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                {% set ns = namespace(
+                    current_month = None,
+                    current_year  = None,
+                    total_aut = 0,
+                    total_act = 0,
+                    total_falt = 0
+                ) %}
+                {% for row in cobertura_detalle_rows %}
+                  {% if ns.current_month is not none
+                        and (row['MES'] != ns.current_month or row['AÑO'] != ns.current_year) %}
+                    <tr class="bg-amber-100 font-semibold">
+                      <td class="px-4 py-2 text-[13px] text-slate-900 text-center">
+                        <strong>Total {{ ns.current_month }} {{ ns.current_year }}</strong>
+                      </td>
+                      <td class="px-4 py-2 text-[13px] tabular-nums text-slate-900 text-center">
+                        <strong>{{ "{:,.0f}".format(ns.total_aut) }}</strong>
+                      </td>
+                      <td class="px-4 py-2 text-[13px] tabular-nums text-slate-900 text-center">
+                        <strong>{{ "{:,.0f}".format(ns.total_act) }}</strong>
+                      </td>
+                      <td class="px-4 py-2 text-[13px] tabular-nums text-rose-600 text-center">
+                        <strong>{{ "{:,.0f}".format(ns.total_falt) }}</strong>
+                      </td>
+                      <td class="px-4 py-2 text-[13px] text-slate-800 text-center"></td>
+                      <td class="px-4 py-2 text-[13px] text-slate-800 text-center"></td>
+                    </tr>
+                    {% set ns.total_aut = 0 %}
+                    {% set ns.total_act = 0 %}
+                    {% set ns.total_falt = 0 %}
+                  {% endif %}
+                  {% if ns.current_month is none
+                        or row['MES'] != ns.current_month
+                        or row['AÑO'] != ns.current_year %}
+                    {% set ns.current_month = row['MES'] %}
+                    {% set ns.current_year  = row['AÑO'] %}
+                  {% endif %}
+                  <tr class="odd:bg-white even:bg-gray-50 hover:bg-amber-50 transition-colors">
+                    <td class="px-4 py-2 text-[13px] text-slate-800 text-center">
+                      {{ row['CAMPAÑA'] }}
+                    </td>
+                    <td class="px-4 py-2 text-[13px] tabular-nums text-slate-900 text-center">
+                      {{ "{:,.0f}".format(row['PLANTILLA AUTORIZADA']) }}
+                    </td>
+                    <td class="px-4 py-2 text-[13px] tabular-nums text-slate-900 text-center">
+                      {{ "{:,.0f}".format(row['TOTAL ACTIVOS']) }}
+                    </td>
+                    <td class="px-4 py-2 text-[13px] tabular-nums text-rose-600 text-center">
+                      {{ "{:,.0f}".format(row['PERSONAL FALTANTE']) }}
+                    </td>
+                    <td class="px-4 py-2 text-[13px] text-slate-800 text-center">
+                      {{ row['MES'] }}
+                    </td>
+                    <td class="px-4 py-2 text-[13px] text-slate-800 text-center">
+                      {{ row['AÑO'] }}
+                    </td>
+                  </tr>
+                  {% set ns.total_aut  = ns.total_aut  + row['PLANTILLA AUTORIZADA'] %}
+                  {% set ns.total_act  = ns.total_act  + row['TOTAL ACTIVOS'] %}
+                  {% set ns.total_falt = ns.total_falt + row['PERSONAL FALTANTE'] %}
+                {% endfor %}
+                {% if ns.current_month is not none %}
+                  <tr class="bg-amber-100 font-semibold">
+                    <td class="px-4 py-2 text-[13px] text-slate-900 text-center">
+                      <strong>Total {{ ns.current_month }} {{ ns.current_year }}</strong>
+                    </td>
+                    <td class="px-4 py-2 text-[13px] tabular-nums text-slate-900 text-center">
+                      <strong>{{ "{:,.0f}".format(ns.total_aut) }}</strong>
+                    </td>
+                    <td class="px-4 py-2 text-[13px] tabular-nums text-slate-900 text-center">
+                      <strong>{{ "{:,.0f}".format(ns.total_act) }}</strong>
+                    </td>
+                    <td class="px-4 py-2 text-[13px] tabular-nums text-rose-600 text-center">
+                      <strong>{{ "{:,.0f}".format(ns.total_falt) }}</strong>
+                    </td>
+                    <td class="px-4 py-2 text-[13px] text-slate-800 text-center"></td>
+                    <td class="px-4 py-2 text-[13px] text-slate-800 text-center"></td>
+                  </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+          <div class="px-6 py-3 border-t flex justify-end bg-white">
+            <button
+              id="coverage-modal-close-footer"
+              type="button"
+              class="inline-flex items-center gap-2 text-sm font-semibold text-[#0c376c] hover:underline"
+            >
+              <i class="fas fa-times-circle"></i>
+              Cerrar
+            </button>
+          </div>
+        </div>
+      </div>
+
+
+      <!-- MODAL DETALLE MOTIVOS DE BAJAS -->
+      <div
+        id="motivos-modal"
+        class="fixed inset-0 z-50 grid place-items-center bg-black/60 backdrop-blur-sm p-4 hidden"
+      >
+        <div class="bg-white w-full max-w-5xl rounded-2xl shadow-2xl flex flex-col border border-gray-200">
+          <!-- Header -->
+          <div class="flex items-center justify-between px-6 py-4 gradient-bg text-white rounded-t-2xl">
+            <div class="flex items-center gap-3">
+              <img src="{{ url_for('static', filename='logos/PXM isotipo 41.png') }}"
+                   alt="Pernexium Logo"
+                   class="h-8 w-auto select-none" />
+              <div class="flex flex-col">
+                <h3 class="text-lg font-semibold tracking-wide">Motivos de Baja por Mes</h3>
+              </div>
+            </div>
+            <button
+              id="motivos-modal-close"
+              class="text-2xl leading-none hover:scale-110 transition-transform"
+              type="button"
+            >
+              &times;
+            </button>
+          </div>
+
+          <!-- Tabla -->
+          <div class="overflow-x-auto max-h-[60vh] bg-slate-50/40">
+            <table class="min-w-full text-sm divide-y divide-gray-200">
+              <thead class="bg-[#0c376c] text-white sticky top-0 z-10">
+                <tr>
+                  <th
+                    scope="col"
+                    class="px-4 py-2 text-left font-semibold tracking-wide text-sm"
+                  >
+                    Motivo
+                  </th>
+                  {% for col in tabla_motivos_baja_columns %}
+                    <th
+                      scope="col"
+                      class="px-4 py-2 text-center font-semibold tracking-wide text-sm"
+                    >
+                      {{ col }}
+                    </th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                {% for row in tabla_motivos_baja_rows %}
+                  <tr class="odd:bg-white even:bg-gray-50 hover:bg-amber-50 transition-colors">
+                    <td class="px-4 py-2 text-[13px] text-slate-800">
+                      {{ row['MOTIVO'] }}
+                    </td>
+                    {% for col in tabla_motivos_baja_columns %}
+                      <td class="px-4 py-2 text-[13px] tabular-nums text-slate-900 text-center">
+                        {{ row[col] }}
+                      </td>
+                    {% endfor %}
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Footer -->
+          <div class="px-6 py-3 border-t flex justify-end bg-white">
+            <button
+              id="motivos-modal-close-footer"
+              type="button"
+              class="inline-flex items-center gap-2 text-sm font-semibold text-[#0c376c] hover:underline"
+            >
+              <i class="fas fa-times-circle"></i>
+              Cerrar
+            </button>
+          </div>
+        </div>
+      </div>
+
+
+
+
+
+    </section>
+    <!-- Más secciones / tablas / gráficas aquí -->
+  </main>
+
+  <!-- ========= SCRIPTS ========= -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const btnPDF = document.getElementById('download-pdf');
+      if (btnPDF) {
+        btnPDF.addEventListener('click', () => {
+          html2pdf().set({
+            margin: 0,
+            filename: 'DIRSAxPernexium-Dashboard-de-Capital-Humano.pdf',
+            image:   { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2, useCORS: true },
+            jsPDF:  { unit: 'pt', format: 'a3', orientation: 'landscape' }
+          }).from(document.body).save();
+        });
+      }
+
+      function getFullSpanishMonthLabel(rawLabel) {
+        if (!rawLabel) return '';
+        const meses = [
+          'enero','febrero','marzo','abril','mayo','junio',
+          'julio','agosto','septiembre','octubre','noviembre','diciembre'
+        ];
+        const labelStr = String(rawLabel).trim();
+        const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(labelStr);
+        if (isoMatch) {
+          const year = parseInt(isoMatch[1], 10);
+          const monthIdx = parseInt(isoMatch[2], 10) - 1;
+          if (monthIdx >= 0 && monthIdx < 12) {
+            return meses[monthIdx] + ' ' + year;
+          }
+        }
+        const d = new Date(labelStr);
+        if (!isNaN(d.getTime())) {
+          return meses[d.getMonth()] + ' ' + d.getFullYear();
+        }
+        const mapAbrev = {
+          'Ene':'enero','Feb':'febrero','Mar':'marzo','Abr':'abril',
+          'May':'mayo','Jun':'junio','Jul':'julio','Ago':'agosto',
+          'Sep':'septiembre','Oct':'octubre','Nov':'noviembre','Dic':'diciembre'
+        };
+        const parts = labelStr.split(' ');
+        if (parts.length === 2 && mapAbrev[parts[0]]) {
+          return mapAbrev[parts[0]] + ' ' + parts[1];
+        }
+        return labelStr;
+      }
+      function capitalizeFirst(label) {
+        if (!label) return '';
+        return label.charAt(0).toUpperCase() + label.slice(1);
+      }
+
+      const funnelLabels = {{ funnel_labels|tojson }};       
+      const funnelDatasetsRaw = {{ funnel_datasets|tojson }}; 
+      const container = document.getElementById('funnels-container');
+      const prevBtn = document.getElementById('funnel-prev');
+      const nextBtn = document.getElementById('funnel-next');
+      const stageColors = [
+        '#0c376c',
+        '#1c5896',
+        '#3a7ec4',
+        '#4f93db',
+        '#5fb8b2',
+        '#7ad9c5'
+      ];
+
+      if (container && funnelDatasetsRaw && funnelDatasetsRaw.length) {
+        const allDatasets = funnelDatasetsRaw || [];
+        const displayDatasets = allDatasets.slice(-3);
+        let currentFunnelIndex = displayDatasets.length ? displayDatasets.length - 1 : 0;
+
+        function updateNavButtons() {
+          if (!prevBtn || !nextBtn) return;
+          const onlyOne = displayDatasets.length <= 1;
+          prevBtn.disabled = onlyOne || currentFunnelIndex === 0;
+          nextBtn.disabled = onlyOne || currentFunnelIndex === displayDatasets.length - 1;
+        }
+
+        function renderFunnel() {
+          container.innerHTML = '';
+          if (!displayDatasets.length) return;
+          const dataset = displayDatasets[currentFunnelIndex];
+          const values = dataset.data || [];
+          if (!values.length) return;
+
+          const levelsCount = values.length;
+          const minWidth = 65;  
+          const maxWidth = 100;
+          const step = levelsCount > 1 ? (maxWidth - minWidth) / (levelsCount - 1) : 0;
+
+          const card = document.createElement('div');
+          card.className = 'funnel-card w-full';
+
+          const header = document.createElement('div');
+          header.className = 'mb-1 pl-[170px]';
+          const fullMonthRaw = getFullSpanishMonthLabel(dataset.label);
+          const fullMonthLabel = capitalizeFirst(fullMonthRaw);
+          header.innerHTML = `
+            <div class="w-full flex justify-center">
+              <p class="text-sm font-semibold text-slate-900">${fullMonthLabel}</p>
+            </div>
+          `;
+          card.appendChild(header);
+
+          const bodyRow = document.createElement('div');
+          bodyRow.className = 'flex flex-col sm:flex-row sm:items-stretch gap-3';
+
+          const legendCol = document.createElement('div');
+          legendCol.className = 'flex flex-col mr-0 sm:mr-4 flex-none';
+          legendCol.style.minWidth = '170px';
+
+          const pyramidWrapper = document.createElement('div');
+          pyramidWrapper.className = 'funnel-pyramid-wrapper';
+
+          values.forEach((value, i) => {
+            const v = value || 0;
+            const width = maxWidth - i * step; 
+            const stageColor = stageColors[i % stageColors.length];
+
+            const stage = document.createElement('div');
+            stage.className = 'funnel-stage';
+            stage.style.width = width + '%';
+            const baseMargin = (100 - width) / 2;
+            stage.style.marginLeft = baseMargin + '%';
+            stage.style.backgroundColor = stageColor;
+            stage.style.border = '1px solid ' + stageColor;
+
+            const valueEl = document.createElement('div');
+            valueEl.className = 'funnel-stage-value';
+            const conv = values[0] ? (v / values[0] * 100) : 0;
+            valueEl.textContent = `${v.toLocaleString('es-MX')} (${conv.toFixed(1)}%)`;
+            stage.appendChild(valueEl);
+
+            const centerText = document.createElement('span');
+            centerText.textContent = `${v.toLocaleString('es-MX')}`;
+            stage.appendChild(centerText);
+
+            pyramidWrapper.appendChild(stage);
+
+            const legendItem = document.createElement('div');
+            legendItem.className = 'funnel-legend-item';
+            const colorDot = document.createElement('span');
+            colorDot.className = 'funnel-legend-color';
+            colorDot.style.backgroundColor = stageColor;
+            const text = document.createElement('span');
+            text.textContent = funnelLabels[i] || `Etapa ${i+1}`;
+            legendItem.appendChild(colorDot);
+            legendItem.appendChild(text);
+            legendCol.appendChild(legendItem);
+          });
+
+          bodyRow.appendChild(legendCol);
+          bodyRow.appendChild(pyramidWrapper);
+          card.appendChild(bodyRow);
+          container.appendChild(card);
+
+          updateNavButtons();
+        }
+
+        if (prevBtn) {
+          prevBtn.addEventListener('click', () => {
+            if (currentFunnelIndex > 0) {
+              currentFunnelIndex -= 1;
+              renderFunnel();
+            }
+          });
+        }
+        if (nextBtn) {
+          nextBtn.addEventListener('click', () => {
+            if (currentFunnelIndex < displayDatasets.length - 1) {
+              currentFunnelIndex += 1;
+              renderFunnel();
+            }
+          });
+        }
+
+        renderFunnel();
+      } else {
+        if (prevBtn) prevBtn.disabled = true;
+        if (nextBtn) nextBtn.disabled = true;
+      }
+
+      // === Gráfica de Cobertura de Cartera (Barras) ===
+      const coverageLabels      = {{ cobertura_labels      | tojson }};
+      const coverageValues      = {{ cobertura_values      | tojson }}; 
+      const coverageAutorizados = {{ cobertura_autorizados | tojson }};
+      const coverageActivos     = {{ cobertura_activos     | tojson }};
+      const coverageCanvas = document.getElementById('coverage-chart');
+
+      if (coverageCanvas && Array.isArray(coverageLabels) && coverageLabels.length) {
+        const ctx = coverageCanvas.getContext('2d');
+
+        const raw = coverageLabels.map((label, i) => {
+          const porcentaje   = coverageValues[i]       ?? 0;
+          const autorizados  = coverageAutorizados[i]  ?? 0;
+          const activos      = coverageActivos[i]      ?? 0;
+          const faltante     = Math.max(autorizados - activos, 0);
+          return { label, porcentaje, autorizados, activos, faltante };
+        });
+
+        const labels          = raw.map(r => r.label);
+        const dataActivos     = raw.map(r => r.activos);
+        const dataFaltante    = raw.map(r => r.faltante);
+        const textoPorcentaje = raw.map(r => `${(r.porcentaje ?? 0).toFixed(1)}%`);
+        const textoActAut     = raw.map(
+          r => `${r.activos.toLocaleString('es-MX')} / ${r.autorizados.toLocaleString('es-MX')}`
+        );
+
+        const barCount     = labels.length;
+        const barThickness =
+          barCount <= 3 ? 60 :
+          barCount <= 8 ? 40 :
+          26;
+
+        const maxAutorizados = Math.max(...raw.map(r => r.autorizados || 0), 0);
+        const suggestedMax   = maxAutorizados > 0 ? maxAutorizados * 1.15 : undefined;
+
+        const totalLabelPluginCobertura = {
+          id: 'totalLabelPluginCobertura',
+          afterDatasetsDraw(chart, args, pluginOptions) {
+            const { ctx } = chart;
+            const meta = chart.getDatasetMeta(chart.data.datasets.length - 1);
+            ctx.save();
+            ctx.font = '12px sans-serif';
+            ctx.fillStyle = '#000';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            meta.data.forEach((bar, i) => {
+              const xPos = bar.x;
+              const yPos = bar.y - 4;
+              ctx.fillText(textoPorcentaje[i], xPos, yPos);
+            });
+            ctx.restore();
+          }
+        };
+
+        new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [
+              {
+                label: 'Activos',
+                data: dataActivos,
+                backgroundColor: '#0c376c',
+                borderWidth: 0,
+                barThickness: barThickness,
+                maxBarThickness: barThickness,
+                stack: 'total'
+              },
+              {
+                label: 'Faltantes',
+                data: dataFaltante,
+                backgroundColor: '#94a3b8',
+                borderWidth: 0,
+                barThickness: barThickness,
+                maxBarThickness: barThickness,
+                stack: 'total'
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: {
+              padding: {
+                top: -4,   
+                right: 8,
+                bottom: 0,
+                left: 0
+              }
+            },
+            plugins: {
+              legend: {
+                position: 'top',
+                labels: {
+                  padding: 3,   
+                  boxWidth: 12,
+                  boxHeight: 12
+                },
+                padding: 3
+              },
+              tooltip: {
+                mode: 'nearest',
+                intersect: false,
+                callbacks: {
+                  label: function (context) {
+                    const datasetLabel = context.dataset.label || '';
+                    const value = context.parsed.y ?? 0;
+                    return ` ${datasetLabel}: ${value.toLocaleString('es-MX')}`;
+                  },
+                  afterBody: function (items) {
+                    const idx = items[0].dataIndex;
+                    return [
+                      `Cobertura: ${textoPorcentaje[idx]}`,
+                      `Activos / Autorizados: ${textoActAut[idx]}`
+                    ];
+                  }
+                }
+              }
+            },
+            scales: {
+              x: {
+                stacked: true,
+                categoryPercentage:
+                  barCount <= 3 ? 0.5 :
+                  barCount <= 8 ? 0.7 : 0.9,
+                barPercentage:
+                  barCount <= 3 ? 0.85 :
+                  barCount <= 8 ? 0.9 : 0.95,  
+                grid: {
+                  display: false,
+                  drawBorder: false
+                },
+                ticks: {
+                  font: { size: 10 },
+                  color: '#64748b',
+                  maxRotation: 45,
+                  minRotation: 0,
+                  padding: 4
+                }
+              },
+              y: {
+                stacked: true,
+                beginAtZero: true,
+                suggestedMax: suggestedMax,
+                ticks: {
+                  callback: function (value) {
+                    return value.toLocaleString('es-MX');
+                  },
+                  font: { size: 10 },
+                  color: '#64748b',
+                  padding: 4
+                },
+                grid: {
+                  display: false,
+                  drawBorder: false
+                }
+              }
+            }
+          },
+          plugins: [totalLabelPluginCobertura]
+        });
+      }
+
+      // === Modal "Ver Detalle" Cobertura ===
+      const detalleBtn = document.getElementById('btn-cobertura-detalle');
+      const coverageModal = document.getElementById('coverage-modal');
+      const closeBtnHead = document.getElementById('coverage-modal-close');
+      const closeBtnFooter = document.getElementById('coverage-modal-close-footer');
+
+      function openCoverageModal() {
+        if (!coverageModal) return;
+        coverageModal.classList.remove('hidden');
+        coverageModal.classList.add('flex');
+      }
+      function closeCoverageModal() {
+        if (!coverageModal) return;
+        coverageModal.classList.add('hidden');
+        coverageModal.classList.remove('flex');
+      }
+
+      if (detalleBtn && coverageModal) {
+        detalleBtn.addEventListener('click', openCoverageModal);
+      }
+      if (closeBtnHead) {
+        closeBtnHead.addEventListener('click', closeCoverageModal);
+      }
+      if (closeBtnFooter) {
+        closeBtnFooter.addEventListener('click', closeCoverageModal);
+      }
+      if (coverageModal) {
+        coverageModal.addEventListener('click', (e) => {
+          if (e.target === coverageModal) {
+            closeCoverageModal();
+          }
+        });
+      }
+
+      const coverageDetailTable = document.getElementById('coverage-detail-table');
+      if (coverageDetailTable) {
+        const headerCells = coverageDetailTable.querySelectorAll('thead .sort-header');
+        const tbody = coverageDetailTable.querySelector('tbody');
+        let currentSortIndex = null;
+        let currentSortDir = 'asc';
+
+        function parseCellValue(text, type) {
+          if (type === 'number') {
+            const cleaned = (text || '')
+              .replace(/\./g, '')
+              .replace(/,/g, '')
+              .trim();
+            const num = parseFloat(cleaned);
+            return isNaN(num) ? 0 : num;
+          }
+          return (text || '').toString().toLowerCase();
+        }
+
+        function updateIndicators(activeIndex, dir) {
+          headerCells.forEach((th) => {
+            const indicator = th.querySelector('.sort-indicator');
+            if (!indicator) return;
+            const thIndex = parseInt(th.dataset.sortIndex, 10);
+            if (thIndex === activeIndex) {
+              indicator.textContent = dir === 'asc' ? '▲' : '▼';
+              indicator.classList.remove('opacity-70');
+              indicator.classList.add('opacity-100');
+            } else {
+              indicator.textContent = '↕';
+              indicator.classList.add('opacity-70');
+              indicator.classList.remove('opacity-100');
+            }
+          });
+        }
+
+        function sortCoverageTable(colIndex, type) {
+          const rows = Array.from(tbody.querySelectorAll('tr'));
+          if (currentSortIndex === colIndex) {
+            currentSortDir = currentSortDir === 'asc' ? 'desc' : 'asc';
+          } else {
+            currentSortIndex = colIndex;
+            currentSortDir = 'asc';
+          }
+          rows.sort((a, b) => {
+            const aText = a.children[colIndex]?.textContent || '';
+            const bText = b.children[colIndex]?.textContent || '';
+            const aVal = parseCellValue(aText, type);
+            const bVal = parseCellValue(bText, type);
+            if (aVal < bVal) return currentSortDir === 'asc' ? -1 : 1;
+            if (aVal > bVal) return currentSortDir === 'asc' ? 1 : -1;
+            return 0;
+          });
+          rows.forEach((row) => tbody.appendChild(row));
+          updateIndicators(colIndex, currentSortDir);
+        }
+
+        headerCells.forEach((th) => {
+          const btn = th.querySelector('button');
+          if (!btn) return;
+          btn.addEventListener('click', () => {
+            const colIndex = parseInt(th.dataset.sortIndex, 10);
+            const type = th.dataset.type || 'text';
+            sortCoverageTable(colIndex, type);
+          });
+        });
+      }
+
+      // === Modal "Ver Detalle" Motivos de Bajas ===
+      const motivosDetalleBtn   = document.getElementById('btn-motivos-detalle');
+      const motivosModal        = document.getElementById('motivos-modal');
+      const motivosCloseHead    = document.getElementById('motivos-modal-close');
+      const motivosCloseFooter  = document.getElementById('motivos-modal-close-footer');
+
+      function openMotivosModal() {
+        if (!motivosModal) return;
+        motivosModal.classList.remove('hidden');
+        motivosModal.classList.add('flex');
+      }
+
+      function closeMotivosModal() {
+        if (!motivosModal) return;
+        motivosModal.classList.add('hidden');
+        motivosModal.classList.remove('flex');
+      }
+
+      if (motivosDetalleBtn && motivosModal) {
+        motivosDetalleBtn.addEventListener('click', openMotivosModal);
+      }
+      if (motivosCloseHead) {
+        motivosCloseHead.addEventListener('click', closeMotivosModal);
+      }
+      if (motivosCloseFooter) {
+        motivosCloseFooter.addEventListener('click', closeMotivosModal);
+      }
+      if (motivosModal) {
+        motivosModal.addEventListener('click', (e) => {
+          if (e.target === motivosModal) {
+            closeMotivosModal();
+          }
+        });
+      }
+
+      // Esc para cerrar ambos modales
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          closeCoverageModal();
+          if (typeof closeMotivosModal === 'function') {
+            closeMotivosModal();
+          }
+        }
+      });
+
+      // === Gráfica Ingresos vs Bajas ===
+      const ibCanvas = document.getElementById('ingresos-bajas-chart');
+      if (ibCanvas) {
+        const ctxIB = ibCanvas.getContext('2d');
+
+        const weekNumbers   = {{ ingresos_bajas_week_labels   | tojson }};
+        const weekIngresos  = {{ ingresos_bajas_week_ingresos | tojson }};
+        const weekBajas     = {{ ingresos_bajas_week_bajas    | tojson }};
+        const weekMonths    = {{ ingresos_bajas_week_month_numbers | tojson }};
+        const monthLabels   = {{ ingresos_bajas_month_labels  | tojson }};
+        const monthIngresos = {{ ingresos_bajas_month_ingresos| tojson }};
+        const monthBajas    = {{ ingresos_bajas_month_bajas   | tojson }};
+        const yearIB        = {{ ingresos_bajas_year          | tojson }};
+
+        const weekLabels = weekNumbers.map(w => `Sem ${w}`);
+        const monthLabelsFull = monthLabels.map(m => `${m} ${yearIB}`);
+
+        const semanalBtn = document.getElementById('ib-toggle-semanal');
+        const mensualBtn = document.getElementById('ib-toggle-mensual');
+
+        let currentMode = 'semanal';
+
+        function getDatasetConfig(mode) {
+          if (mode === 'mensual') {
+            return {
+              labels: monthLabelsFull,
+              ingresos: monthIngresos,
+              bajas: monthBajas
+            };
+          }
+          return {
+            labels: weekLabels,
+            ingresos: weekIngresos,
+            bajas: weekBajas
+          };
+        }
+
+        function buildChartData(cfg) {
+          return {
+            labels: cfg.labels,
+            datasets: [
+              {
+                label: 'Ingresos',
+                data: cfg.ingresos,
+                backgroundColor: '#16a34a',
+                borderColor: '#16a34a',
+                borderWidth: 1,
+                maxBarThickness: 26
+              },
+              {
+                label: 'Bajas',
+                data: cfg.bajas,
+                backgroundColor: '#dc2626',
+                borderColor: '#dc2626',
+                borderWidth: 1,
+                maxBarThickness: 26
+              }
+            ]
+          };
+        }
+
+        const valueLabelPluginIB = {
+          id: 'valueLabelPluginIB',
+          afterDatasetsDraw(chart, args, pluginOptions) {
+            const { ctx } = chart;
+            ctx.save();
+            ctx.font = '11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillStyle = '#0f172a';
+            chart.data.datasets.forEach((dataset, datasetIndex) => {
+              if (!chart.isDatasetVisible(datasetIndex)) {
+                return;
+              }
+              const meta = chart.getDatasetMeta(datasetIndex);
+              meta.data.forEach((bar, i) => {
+                const val = dataset.data[i];
+                if (val == null || isNaN(val)) return;
+                const x = bar.x;
+                let y = bar.y - 4;
+                if (datasetIndex === 1) {
+                  y = y - 10;
+                }
+                ctx.fillText(
+                  Number(val).toLocaleString('es-MX'),
+                  x,
+                  y
+                );
+              });
+            });
+            ctx.restore();
+          }
+        };
+
+        const monthSeparatorPluginIB = {
+          id: 'monthSeparatorPluginIB',
+          afterDraw(chart, args, pluginOptions) {
+            if (currentMode !== 'semanal') return;
+            const xAxis = chart.scales.x;
+            const chartArea = chart.chartArea;
+            if (!xAxis || !chartArea) return;
+
+            const { ctx } = chart;
+            ctx.save();
+            ctx.strokeStyle = 'rgba(148,163,184,0.6)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 3]);
+            ctx.fillStyle = '#64748b';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.font = '10px sans-serif';
+
+            const monthNamesShort = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+            for (let i = 1; i < weekMonths.length; i++) {
+              const prevMonth = weekMonths[i - 1];
+              const currentMonth = weekMonths[i];
+              if (prevMonth == null || currentMonth == null) continue;
+              if (currentMonth !== prevMonth) {
+                const x = xAxis.getPixelForValue(i);
+                ctx.beginPath();
+                ctx.moveTo(x, chartArea.top);
+                ctx.lineTo(x, chartArea.bottom);
+                ctx.stroke();
+                const label = monthNamesShort[currentMonth - 1] || '';
+                if (label) {
+                  ctx.fillText(label, x, chartArea.top - 3);
+                }
+              }
+            }
+
+            ctx.restore();
+          }
+        };
+
+        const baseOptions = {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            mode: 'index',
+            intersect: false
+          },
+          layout: {
+            padding: {
+              top: 20,
+              right: 0,
+              bottom: 0,
+              left: 0
+            }
+          },
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: {
+                usePointStyle: true,
+                padding: 10
+              },
+              padding: 10
+            },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) {
+                  const value = ctx.parsed.y || 0;
+                  return ` ${ctx.dataset.label}: ${value.toLocaleString('es-MX')}`;
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              stacked: false,
+              grid: {
+                display: false
+              },
+              ticks: {
+                autoSkip: true,
+                maxTicksLimit: 14,
+                color: '#64748b'
+              }
+            },
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: function(value) {
+                  return value.toLocaleString('es-MX');
+                },
+                color: '#64748b'
+              },
+              grid: {
+                color: 'rgba(148, 163, 184, 0.2)',
+                drawBorder: false
+              }
+            }
+          }
+        };
+
+        const initialCfg = getDatasetConfig(currentMode);
+        let ibChart = new Chart(ctxIB, {
+          type: 'bar',
+          data: buildChartData(initialCfg),
+          options: baseOptions,
+          plugins: [valueLabelPluginIB, monthSeparatorPluginIB]
+        });
+
+        function setActiveMode(mode) {
+          currentMode = mode;
+          const cfg = getDatasetConfig(mode);
+          ibChart.data = buildChartData(cfg);
+          ibChart.update();
+          if (semanalBtn && mensualBtn) {
+            if (mode === 'semanal') {
+              semanalBtn.classList.add('bg-[#0c376c]', 'text-white', 'shadow-sm');
+              semanalBtn.classList.remove('bg-slate-100', 'text-slate-700');
+              mensualBtn.classList.remove('bg-[#0c376c]', 'text-white', 'shadow-sm');
+              mensualBtn.classList.add('bg-slate-100', 'text-slate-700');
+            } else {
+              mensualBtn.classList.add('bg-[#0c376c]', 'text-white', 'shadow-sm');
+              mensualBtn.classList.remove('bg-slate-100', 'text-slate-700');
+              semanalBtn.classList.remove('bg-[#0c376c]', 'text-white', 'shadow-sm');
+              semanalBtn.classList.add('bg-slate-100', 'text-slate-700');
+            }
+          }
+        }
+
+        if (semanalBtn) {
+          semanalBtn.addEventListener('click', () => setActiveMode('semanal'));
+        }
+        if (mensualBtn) {
+          mensualBtn.addEventListener('click', () => setActiveMode('mensual'));
+        }
+
+        setActiveMode(currentMode);
+      }
+
+      // === Gráfica Ingresos vs Bajas - Acumulado ===
+      const ibAcumCanvas = document.getElementById('ingresos-bajas-acum-chart');
+      if (ibAcumCanvas) {
+        const ctxAcum = ibAcumCanvas.getContext('2d');
+
+        const weekCumLabels    = {{ ingresos_bajas_cum_week_labels | tojson }};
+        const weekCumIngresos  = {{ ingresos_bajas_cum_ingresos     | tojson }};
+        const weekCumBajas     = {{ ingresos_bajas_cum_bajas        | tojson }};
+        const weekMonthsAcum   = {{ ingresos_bajas_week_month_numbers | tojson }};
+
+        const weekCumLabelsText = weekCumLabels.map(w => `Sem ${w}`);
+        const weekCumDiff = weekCumIngresos.map((v, i) => {
+          const ing = Number(v || 0);
+          const baj = Number(weekCumBajas[i] || 0);
+          return ing - baj;
+        });
+
+        const acumData = {
+          labels: weekCumLabelsText,
+          datasets: [
+            {
+              label: 'Ingresos Acumulados',
+              data: weekCumIngresos,
+              borderColor: '#16a34a',
+              backgroundColor: 'rgba(22,163,74,0.10)',
+              tension: 0.25,
+              fill: true,
+              pointRadius: 3,
+              pointHoverRadius: 4,
+            },
+            {
+              label: 'Bajas Acumuladas',
+              data: weekCumBajas,
+              borderColor: '#dc2626',
+              backgroundColor: 'rgba(220,38,38,0.10)',
+              tension: 0.25,
+              fill: true,
+              pointRadius: 3,
+              pointHoverRadius: 4,
+            },
+            {
+              label: 'Diferencia',
+              data: weekCumDiff,
+              borderColor: '#0c376c',
+              backgroundColor: 'rgba(12,55,108,0.08)',
+              tension: 0.25,
+              fill: false,
+              pointRadius: 3,
+              pointHoverRadius: 4,
+              borderWidth: 2,
+              hidden: true  
+            }
+          ]
+        };
+
+        const valueLabelPluginAcum = {
+          id: 'valueLabelPluginAcum',
+          afterDatasetsDraw(chart, args, pluginOptions) {
+            const { ctx } = chart;
+            ctx.save();
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#0f172a';
+
+            chart.data.datasets.forEach((dataset, datasetIndex) => {
+              if (!chart.isDatasetVisible(datasetIndex)) return;
+              const meta = chart.getDatasetMeta(datasetIndex);
+              meta.data.forEach((point, i) => {
+                if (i % 3 !== 0) return;
+                const val = dataset.data[i];
+                if (val == null || isNaN(val)) return;
+                const x = point.x;
+                let y = point.y;
+                if (datasetIndex === 0) {
+                  y = y - 14;
+                }
+                else if (datasetIndex === 1) {
+                  y = y + 16;
+                }
+                else if (datasetIndex === 2) {
+                  y = y + 24;
+                }
+                ctx.fillText(
+                  Number(val).toLocaleString('es-MX'),
+                  x,
+                  y
+                );
+              });
+            });
+
+            ctx.restore();
+          }
+        };
+
+        const monthSeparatorPluginAcum = {
+          id: 'monthSeparatorPluginAcum',
+          afterDraw(chart, args, pluginOptions) {
+            if (!weekMonthsAcum || !weekMonthsAcum.length) return;
+
+            const xAxis = chart.scales.x;
+            const chartArea = chart.chartArea;
+            if (!xAxis || !chartArea) return;
+
+            const { ctx } = chart;
+            ctx.save();
+            ctx.strokeStyle = 'rgba(148,163,184,0.7)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 3]);
+            ctx.fillStyle = '#64748b';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.font = '10px sans-serif';
+
+            const monthNamesShort = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+            for (let i = 1; i < weekMonthsAcum.length; i++) {
+              const prevMonth = weekMonthsAcum[i - 1];
+              const currentMonth = weekMonthsAcum[i];
+              if (prevMonth == null || currentMonth == null) continue;
+              if (currentMonth !== prevMonth) {
+                const x = xAxis.getPixelForValue(i);
+                ctx.beginPath();
+                ctx.moveTo(x, chartArea.top);
+                ctx.lineTo(x, chartArea.bottom);
+                ctx.stroke();
+                const label = monthNamesShort[currentMonth - 1] || '';
+                if (label) {
+                  ctx.fillText(label, x, chartArea.top - 3);
+                }
+              }
+            }
+
+            ctx.restore();
+          }
+        };
+
+        const ibAcumChart = new Chart(ctxAcum, {
+          type: 'line',
+          data: acumData,
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+              mode: 'index',
+              intersect: false
+            },
+            layout: {
+              padding: {
+                top: 20,
+                right: 10,
+                bottom: 0,
+                left: 0
+              }
+            },
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: {
+                  usePointStyle: true,
+                  padding: 10
+                }
+              },
+              tooltip: {
+                callbacks: {
+                  label: function(ctx) {
+                    const value = ctx.parsed.y || 0;
+                    return ` ${ctx.dataset.label}: ${value.toLocaleString('es-MX')}`;
+                  }
+                }
+              }
+            },
+            scales: {
+              x: {
+                grid: {
+                  display: false
+                },
+                ticks: {
+                  maxTicksLimit: 14,
+                  color: '#64748b'
+                }
+              },
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  callback: function(value) {
+                    return value.toLocaleString('es-MX');
+                  },
+                  color: '#64748b'
+                },
+                grid: {
+                  color: 'rgba(148,163,184,0.2)',
+                  drawBorder: false
+                }
+              }
+            }
+          },
+          plugins: [valueLabelPluginAcum, monthSeparatorPluginAcum]
+        });
+
+        const diffToggleBtn = document.getElementById('ib-acum-toggle-diff');
+        if (diffToggleBtn) {
+          diffToggleBtn.addEventListener('click', () => {
+            const isVisible = ibAcumChart.isDatasetVisible(2);
+            ibAcumChart.setDatasetVisibility(2, !isVisible);
+            ibAcumChart.update();
+            const icon = diffToggleBtn.querySelector('i');
+            const text = diffToggleBtn.querySelector('span');
+            if (!isVisible) {
+              diffToggleBtn.classList.remove('bg-slate-50', 'text-slate-600');
+              diffToggleBtn.classList.add('bg-[#0c376c]', 'text-white', 'border-[#0c376c]');
+              if (icon) {
+                icon.classList.remove('fa-eye-slash');
+                icon.classList.add('fa-eye');
+              }
+              if (text) text.textContent = 'Ocultar';
+            } else {
+              diffToggleBtn.classList.add('bg-slate-50', 'text-slate-600');
+              diffToggleBtn.classList.remove('bg-[#0c376c]', 'text-white', 'border-[#0c376c]');
+              if (icon) {
+                icon.classList.remove('fa-eye');
+                icon.classList.add('fa-eye-slash');
+              }
+              if (text) text.textContent = 'Mostrar';
+            }
+          });
+        }
+      }
+
+      // === Gráfica LEADs por Reclutado ===
+      const leadsCanvas = document.getElementById('leads-chart');
+      if (leadsCanvas) {
+        const ctxLeads = leadsCanvas.getContext('2d');
+
+        const leadsLabelsRaw      = {{ leads_labels         | tojson }};
+        const leadsPorReclutador = {{ leads_por_reclutador | tojson }};
+        const leadsTotal         = {{ leads_total          | tojson }};
+
+        const leadsLabels = leadsLabelsRaw.map(lbl => {
+          const full = getFullSpanishMonthLabel(lbl);
+          return capitalizeFirst(full);
+        });
+
+        const palette = [
+          '#0c376c',
+          '#1d4ed8',
+          '#38bdf8',
+          '#22c55e',
+          '#eab308',
+          '#ec4899',
+          '#f97316',
+          '#8b5cf6',
+          '#06b6d4',
+          '#16a34a'
+        ];
+
+        const reclutadoresOrdenados = Object.entries(leadsPorReclutador)
+          .map(([rec, arr]) => {
+            const total = (arr || []).reduce((acc, v) => acc + (v || 0), 0);
+            return { reclutador: rec, total };
+          })
+          .sort((a, b) => b.total - a.total)
+          .map(obj => obj.reclutador);
+
+        const datasetsStack = [];
+        let colorIdx = 0;
+        reclutadoresOrdenados.forEach((rec) => {
+          const color = palette[colorIdx % palette.length];
+          colorIdx += 1;
+          datasetsStack.push({
+            label: rec,
+            type: 'bar',
+            data: leadsPorReclutador[rec],
+            backgroundColor: color,
+            borderColor: color,
+            borderWidth: 1,
+            borderRadius: 4,
+            stack: 'stack1',
+            maxBarThickness: 38
+          });
+        });
+
+        const totalDataset = {
+          label: 'TOTAL',
+          type: 'line',
+          data: leadsTotal,
+          borderColor: '#0f172a',
+          backgroundColor: 'rgba(15,23,42,0.06)',
+          borderWidth: 2,
+          tension: 0.25,
+          pointRadius: 3,
+          pointHoverRadius: 4,
+          fill: false,
+          hidden: false,
+          yAxisID: 'y'
+        };
+
+        const allDatasets = [...datasetsStack, totalDataset];
+
+        const totalLabelPluginLeads = {
+          id: 'totalLabelPluginLeads',
+          afterDatasetsDraw(chart, args, pluginOptions) {
+            const { ctx } = chart;
+            const xAxis = chart.scales.x;
+            const yAxis = chart.scales.y;
+            if (!xAxis || !yAxis) return;
+
+            ctx.save();
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillStyle = '#0f172a';
+
+            const labelsCount = chart.data.labels.length;
+            for (let i = 0; i < labelsCount; i++) {
+              let total = 0;
+              chart.data.datasets.forEach((ds, dsIndex) => {
+                if (ds.type !== 'bar') return;
+                if (!chart.isDatasetVisible(dsIndex)) return;
+                const v = ds.data[i];
+                if (v != null && !isNaN(v)) {
+                  total += Number(v);
+                }
+              });
+              if (total === 0) continue;
+              const x = xAxis.getPixelForValue(i);
+              const y = yAxis.getPixelForValue(total) - 4;
+              ctx.fillText(
+                total.toLocaleString('es-MX'),
+                x,
+                y
+              );
+            }
+
+            ctx.restore();
+          }
+        };
+
+        new Chart(ctxLeads, {
+          type: 'bar',
+          data: {
+            labels: leadsLabels,
+            datasets: allDatasets
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+              mode: 'index',
+              intersect: false
+            },
+            layout: {
+              padding: {
+                top: 10,
+                right: 10,
+                bottom: 0,
+                left: 0
+              }
+            },
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: {
+                  usePointStyle: true,
+                  padding: 10
+                }
+              },
+              tooltip: {
+                callbacks: {
+                  title: function (items) {
+                    return items[0].label || '';
+                  },
+                  label: function (ctx) {
+                    const value = ctx.parsed.y || 0;
+                    return ` ${ctx.dataset.label}: ${value.toLocaleString('es-MX')}`;
+                  },
+                }
+              }
+            },
+            scales: {
+              x: {
+                stacked: true,
+                grid: {
+                  display: false
+                },
+                ticks: {
+                  color: '#64748b',
+                  maxRotation: 30,
+                  minRotation: 0
+                }
+              },
+              y: {
+                stacked: true,
+                beginAtZero: true,
+                ticks: {
+                  callback: function (value) {
+                    return value.toLocaleString('es-MX');
+                  },
+                  color: '#64748b'
+                },
+                grid: {
+                  color: 'rgba(148,163,184,0.2)',
+                  drawBorder: false
+                }
+              }
+            }
+          },
+          plugins: [totalLabelPluginLeads]
+        });
+      }
+
+      // === Gráfica CANALES DE INGRESO (todos los meses, canales como filtros) ===
+      const canalesCanvas = document.getElementById('canales-chart');
+
+      const canalesPlantillaPorMes      = {{ canales_plantilla_por_mes      | tojson }};
+      const canalesPlantillaMesesLabels = {{ canales_plantilla_meses_labels | tojson }};
+      const canalesPautaPorMes          = {{ canales_pauta_por_mes          | tojson }};
+      const canalesPautaMesesLabels     = {{ canales_pauta_meses_labels     | tojson }};
+
+      const btnCanalesPlantilla = document.getElementById('canales-toggle-plantilla');
+      const btnCanalesPauta     = document.getElementById('canales-toggle-pauta');
+
+      if (canalesCanvas) {
+        const ctxCanales = canalesCanvas.getContext('2d');
+
+        const mesesLargos = [
+          'enero','febrero','marzo','abril','mayo','junio',
+          'julio','agosto','septiembre','octubre','noviembre','diciembre'
+        ];
+
+        function prettyMesFromYYYYMM(ym) {
+          const parts = String(ym).split('-');
+          if (parts.length !== 2) return ym;
+          const year  = parseInt(parts[0], 10);
+          const month = parseInt(parts[1], 10);
+          if (isNaN(year) || isNaN(month) || month < 1 || month > 12) return ym;
+          const nombreMes = mesesLargos[month - 1];
+          return nombreMes.charAt(0).toUpperCase() + nombreMes.slice(1) + ' ' + year;
+        }
+
+        const paletteCanales = [
+          '#0c376c',
+          '#1d4ed8',
+          '#38bdf8',
+          '#22c55e',
+          '#84cc16',
+          '#eab308',
+          '#f97316',
+          '#ec4899',
+          '#8b5cf6',
+          '#06b6d4',
+          '#16a34a'
+        ];
+
+        // Construye data (labels + datasets) para un origen concreto
+        function buildCanalesData(sourcePorMes, sourceMesesLabels) {
+          if (!sourcePorMes || !Array.isArray(sourceMesesLabels) || !sourceMesesLabels.length) {
+            return null;
+          }
+
+          const labelsMeses = sourceMesesLabels.map(prettyMesFromYYYYMM);
+
+          const canalesSet = new Set();
+          Object.values(sourcePorMes).forEach(mesDict => {
+            Object.keys(mesDict || {}).forEach(canal => canalesSet.add(canal));
+          });
+          let canales = Array.from(canalesSet);
+
+          const totalesPorCanal = {};
+          canales.forEach(canal => {
+            let total = 0;
+            sourceMesesLabels.forEach(ym => {
+              const val = (sourcePorMes[ym] && sourcePorMes[ym][canal]) || 0;
+              total += val;
+            });
+            totalesPorCanal[canal] = total;
+          });
+          canales.sort((a, b) => (totalesPorCanal[b] || 0) - (totalesPorCanal[a] || 0));
+
+          const datasets = canales.map((canal, idx) => {
+            const color = paletteCanales[idx % paletteCanales.length];
+            const dataPorMes = sourceMesesLabels.map(ym => {
+              const dicMes = sourcePorMes[ym] || {};
+              return dicMes[canal] || 0;
+            });
+            return {
+              label: canal,
+              data: dataPorMes,
+              backgroundColor: color,
+              borderColor: color,
+              borderWidth: 1,
+              borderRadius: 4,
+              maxBarThickness: 32
+            };
+          });
+
+          return {
+            labels: labelsMeses,
+            datasets
+          };
+        }
+
+        // Plugin para mostrar valores encima de cada barra
+        const valueLabelPluginCanales = {
+          id: 'valueLabelPluginCanales',
+          afterDatasetsDraw(chart) {
+            const { ctx } = chart;
+            ctx.save();
+            ctx.font = '9px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillStyle = '#0f172a';
+
+            chart.data.datasets.forEach((dataset, datasetIndex) => {
+              if (!chart.isDatasetVisible(datasetIndex)) return;
+              const meta = chart.getDatasetMeta(datasetIndex);
+              meta.data.forEach((bar, i) => {
+                const val = dataset.data[i];
+                if (val == null || isNaN(val) || val === 0) return;
+                const x = bar.x;
+                const y = bar.y - 2;
+                ctx.fillText(
+                  Number(val).toLocaleString('es-MX'),
+                  x,
+                  y
+                );
+              });
+            });
+
+            ctx.restore();
+          }
+        };
+
+        // Devuelve data ya armada según el modo
+        function getDataPorModo(mode) {
+          if (mode === 'plantilla') {
+            return buildCanalesData(canalesPlantillaPorMes, canalesPlantillaMesesLabels);
+          } else if (mode === 'pauta') {
+            return buildCanalesData(canalesPautaPorMes, canalesPautaMesesLabels);
+          }
+          return null;
+        }
+
+        let canalesMode  = null;
+        let canalesChart = null;
+
+        function actualizarBotones(mode) {
+          if (!btnCanalesPlantilla || !btnCanalesPauta) return;
+
+          if (mode === 'plantilla') {
+            btnCanalesPlantilla.classList.add('bg-[#0c376c]', 'text-white', 'shadow-sm');
+            btnCanalesPlantilla.classList.remove('bg-slate-100', 'text-slate-700');
+
+            btnCanalesPauta.classList.remove('bg-[#0c376c]', 'text-white', 'shadow-sm');
+            btnCanalesPauta.classList.add('bg-slate-100', 'text-slate-700');
+          } else if (mode === 'pauta') {
+            btnCanalesPauta.classList.add('bg-[#0c376c]', 'text-white', 'shadow-sm');
+            btnCanalesPauta.classList.remove('bg-slate-100', 'text-slate-700');
+
+            btnCanalesPlantilla.classList.remove('bg-[#0c376c]', 'text-white', 'shadow-sm');
+            btnCanalesPlantilla.classList.add('bg-slate-100', 'text-slate-700');
+          }
+        }
+
+        // Renderiza (o re-renderiza) la gráfica destruyendo la anterior
+        function renderCanalesChart(mode) {
+          const data = getDataPorModo(mode);
+          if (!data) return;
+
+          canalesMode = mode;
+
+          if (canalesChart) {
+            canalesChart.destroy();
+          }
+
+          canalesChart = new Chart(ctxCanales, {
+            type: 'bar',
+            data: data,
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              interaction: {
+                mode: 'index',
+                intersect: false
+              },
+              layout: {
+                padding: {
+                  top: 10,
+                  right: 10,
+                  bottom: 0,
+                  left: 0
+                }
+              },
+              plugins: {
+                legend: {
+                  position: 'bottom',
+                  labels: {
+                    usePointStyle: true,
+                    padding: 8,
+                    font: {
+                      size: 10
+                    }
+                  }
+                },
+                tooltip: {
+                  callbacks: {
+                    title: function(items) {
+                      return items[0].label || '';
+                    },
+                    label: function(ctx) {
+                      const v = ctx.parsed.y || 0;
+                      const canal = (ctx.dataset.label || '').toLowerCase();
+                      const unidad = canal.includes('referido') ? 'referidos' : 'folios';
+                      return ` ${ctx.dataset.label}: ${v.toLocaleString('es-MX')} ${unidad}`;
+                    }
+                  }
+                }
+              },
+              scales: {
+                x: {
+                  grid: { display: false },
+                  ticks: {
+                    color: '#64748b',
+                    maxRotation: 30,
+                    minRotation: 0
+                  }
+                },
+                y: {
+                  beginAtZero: true,
+                  ticks: {
+                    callback: function(value) {
+                      return value.toLocaleString('es-MX');
+                    },
+                    color: '#64748b'
+                  },
+                  grid: {
+                    color: 'rgba(148,163,184,0.2)',
+                    drawBorder: false
+                  }
+                }
+              }
+            },
+            plugins: [valueLabelPluginCanales]
+          });
+
+          actualizarBotones(mode);
+        }
+
+        // Modo inicial (prioriza plantilla si tiene datos)
+        const tienePlantilla = !!getDataPorModo('plantilla');
+        const tienePauta     = !!getDataPorModo('pauta');
+
+        if (!tienePlantilla && btnCanalesPlantilla) {
+          btnCanalesPlantilla.disabled = true;
+        }
+        if (!tienePauta && btnCanalesPauta) {
+          btnCanalesPauta.disabled = true;
+        }
+
+        const modoInicial = tienePlantilla ? 'plantilla' : 'pauta';
+        renderCanalesChart(modoInicial);
+
+        // Listeners
+        if (btnCanalesPlantilla) {
+          btnCanalesPlantilla.addEventListener('click', () => {
+            if (!tienePlantilla) return;
+            renderCanalesChart('plantilla');
+          });
+        }
+        if (btnCanalesPauta) {
+          btnCanalesPauta.addEventListener('click', () => {
+            if (!tienePauta) return;
+            renderCanalesChart('pauta');
+          });
+        }
+      }
+
+
+
+      // === LÍNEA DE TIEMPO DE PAGOS (Semanal / Mensual) ===
+      const pagosCanvas = document.getElementById('pagos-chart');
+
+      if (pagosCanvas) {
+        const ctxPagos = pagosCanvas.getContext('2d');
+
+        // Datos que vienen del backend (Python/Jinja)
+        const pagosSemanalesLabelsRaw = {{ pagos_semanales_labels | tojson }};
+        const pagosSemanalesValues    = {{ pagos_semanales_values | tojson }};
+        const pagosMensualesLabelsRaw = {{ pagos_mensuales_labels | tojson }};
+        const pagosMensualesValues    = {{ pagos_mensuales_values | tojson }};
+
+        const btnPagosSemanal = document.getElementById('pagos-toggle-semanal');
+        const btnPagosMensual = document.getElementById('pagos-toggle-mensual');
+
+        // Formato MXN
+        function formatCurrencyMXN(value) {
+          return new Intl.NumberFormat('es-MX', {
+            style: 'currency',
+            currency: 'MXN',
+            maximumFractionDigits: 0
+          }).format(value || 0);
+        }
+
+        // Etiquetas para la vista semanal (asumiendo YYYY-MM-DD)
+        function prettyDateLabel(d) {
+          if (!d) return '';
+
+          const partes = String(d).split('-'); // espero "YYYY-MM-DD"
+          if (partes.length !== 3) return d;
+
+          const [year, month, day] = partes;
+          const mesesCortos = ['ene', 'feb', 'mar', 'abr', 'may', 'jun',
+                              'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+          const mesIdx = parseInt(month, 10) - 1;
+          if (mesIdx < 0 || mesIdx > 11) return d;
+
+          const mes = mesesCortos[mesIdx];
+          return `${day.padStart(2, '0')} ${mes} ${year.slice(-2)}`;
+        }
+
+        // Etiquetas para la vista mensual (YYYY-MM)
+        function prettyMonthYYYYMM(ym) {
+          const parts = String(ym).split('-');
+          if (parts.length !== 2) return ym;
+
+          const year  = parseInt(parts[0], 10);
+          const month = parseInt(parts[1], 10);
+
+          if (isNaN(year) || isNaN(month) || month < 1 || month > 12) return ym;
+
+          const meses = [
+            'enero','febrero','marzo','abril','mayo','junio',
+            'julio','agosto','septiembre','octubre','noviembre','diciembre'
+          ];
+          const nombreMes = meses[month - 1];
+          return nombreMes.charAt(0).toUpperCase() + nombreMes.slice(1) + ' ' + year;
+        }
+
+        const pagosWeeklyLabels  = pagosSemanalesLabelsRaw.map(prettyDateLabel);
+        const pagosMonthlyLabels = pagosMensualesLabelsRaw.map(prettyMonthYYYYMM);
+
+        // MODO INICIAL: MENSUAL
+        let pagosMode = 'mensual';
+
+        function getPagosConfig(mode) {
+          if (mode === 'mensual') {
+            return {
+              labels: pagosMonthlyLabels,
+              data: pagosMensualesValues
+            };
+          }
+          // semanal
+          return {
+            labels: pagosWeeklyLabels,
+            data: pagosSemanalesValues
+          };
+        }
+
+        // Plugin para dibujar las etiquetas de valor en el gráfico
+        const valueLabelPluginPagos = {
+          id: 'valueLabelPluginPagos',
+          afterDatasetsDraw(chart) {
+            const { ctx } = chart;
+            const dataset = chart.data.datasets[0];
+            const meta = chart.getDatasetMeta(0);
+
+            const dataLength = dataset.data.length;
+            // Modo mensual: mostrar todas; modo semanal: si hay muchos puntos, saltar algunos
+            const showAllLabels = pagosMode === 'mensual' || dataLength <= 25;
+
+            ctx.save();
+            ctx.font = '9px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillStyle = '#0f172a';
+
+            meta.data.forEach((point, i) => {
+              if (!showAllLabels && i % 5 !== 0) return;
+              const val = dataset.data[i];
+              if (val == null || isNaN(val)) return;
+
+              const x = point.x;
+              const y = point.y - 6;
+              ctx.fillText(formatCurrencyMXN(val), x, y);
+            });
+
+            ctx.restore();
+          }
+        };
+
+        const baseOptionsPagos = {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            mode: 'index',
+            intersect: false
+          },
+          layout: {
+            padding: {
+              top: 18,
+              right: 10,
+              bottom: 0,
+              left: 0
+            }
+          },
+          plugins: {
+            legend: {
+              display: false
+            },
+            tooltip: {
+              callbacks: {
+                title: function (items) {
+                  return items[0]?.label || '';
+                },
+                label: function (ctx) {
+                  const value = ctx.parsed.y || 0;
+                  return ' Monto pagado: ' + formatCurrencyMXN(value);
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              grid: { display: false },
+              ticks: {
+                color: '#64748b',
+                maxRotation: 45,
+                minRotation: 0
+              }
+            },
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: function (value) {
+                  return formatCurrencyMXN(value);
+                },
+                color: '#64748b'
+              },
+              grid: {
+                color: 'rgba(148,163,184,0.2)',
+                drawBorder: false
+              }
+            }
+          }
+        };
+
+        function buildPagosChartData(cfg) {
+          return {
+            labels: cfg.labels,
+            datasets: [
+              {
+                label: 'Monto pagado',
+                data: cfg.data,
+                borderColor: '#0c376c',
+                backgroundColor: 'rgba(12,55,108,0.10)',
+                tension: 0.25,
+                fill: true,
+                pointRadius: 3,
+                pointHoverRadius: 4
+              }
+            ]
+          };
+        }
+
+        const cfgInicialPagos = getPagosConfig(pagosMode);
+
+        let pagosChart = new Chart(ctxPagos, {
+          type: 'line',
+          data: buildPagosChartData(cfgInicialPagos),
+          options: baseOptionsPagos,
+          plugins: [valueLabelPluginPagos]
+        });
+
+        function setPagosMode(mode) {
+          pagosMode = mode;
+          const cfg = getPagosConfig(mode);
+          pagosChart.data = buildPagosChartData(cfg);
+          pagosChart.update();
+
+          if (!btnPagosSemanal || !btnPagosMensual) return;
+
+          if (mode === 'semanal') {
+            btnPagosSemanal.classList.add('bg-[#0c376c]', 'text-white', 'shadow-sm');
+            btnPagosSemanal.classList.remove('bg-slate-100', 'text-slate-700');
+
+            btnPagosMensual.classList.remove('bg-[#0c376c]', 'text-white', 'shadow-sm');
+            btnPagosMensual.classList.add('bg-slate-100', 'text-slate-700');
+          } else {
+            btnPagosMensual.classList.add('bg-[#0c376c]', 'text-white', 'shadow-sm');
+            btnPagosMensual.classList.remove('bg-slate-100', 'text-slate-700');
+
+            btnPagosSemanal.classList.remove('bg-[#0c376c]', 'text-white', 'shadow-sm');
+            btnPagosSemanal.classList.add('bg-slate-100', 'text-slate-700');
+          }
+        }
+
+        if (btnPagosSemanal) {
+          btnPagosSemanal.addEventListener('click', () => setPagosMode('semanal'));
+        }
+        if (btnPagosMensual) {
+          btnPagosMensual.addEventListener('click', () => setPagosMode('mensual'));
+        }
+
+        // Modo inicial: mensual
+        setPagosMode('mensual');
+      }
+
+
+
+
+
+
+
+
+
+      // === GRÁFICA MOTIVOS DE BAJAS (Pie / Doughnut) ===
+      const motivosCanvas = document.getElementById('motivos-bajas-chart');
+
+      if (motivosCanvas) {
+        const motivosLabels = {{ motivos_baja_labels | tojson }};
+        const motivosValues = {{ motivos_baja_values | tojson }};
+
+        if (
+          Array.isArray(motivosLabels) && motivosLabels.length &&
+          Array.isArray(motivosValues) && motivosValues.length
+        ) {
+          const ctxMotivos = motivosCanvas.getContext('2d');
+
+          const paletteMotivos = [
+            '#0c376c',
+            '#1d4ed8',
+            '#22c55e',
+            '#eab308',
+            '#f97316',
+            '#ec4899',
+            '#8b5cf6',
+            '#06b6d4',
+            '#64748b',
+            '#94a3b8'
+          ];
+
+          const backgroundColors = motivosLabels.map(
+            (_, idx) => paletteMotivos[idx % paletteMotivos.length]
+          );
+
+          const pieLabelPlugin = {
+            id: 'pieLabelPlugin',
+            afterDatasetsDraw(chart) {
+              const { ctx, data } = chart;
+              const dataset = data.datasets[0];
+              if (!dataset) return;
+
+              const values = dataset.data || [];
+              const total = values.reduce((acc, v) => acc + (v || 0), 0);
+              if (!total) return;
+
+              const meta = chart.getDatasetMeta(0);
+
+              ctx.save();
+              ctx.textBaseline = 'middle';
+
+              meta.data.forEach((arc, index) => {
+                const value = values[index];
+                if (!value) return;
+
+                const percentage = (value / total) * 100;
+                if (percentage < 1) return;
+
+                const label =
+                  percentage >= 10
+                    ? `${percentage.toFixed(0)}%`
+                    : `${percentage.toFixed(1)}%`;
+
+                const angle = (arc.startAngle + arc.endAngle) / 2;
+                const { x, y, outerRadius } = arc;
+
+                if (percentage >= 7) {
+                  const pos = arc.tooltipPosition();
+                  ctx.textAlign = 'center';
+                  ctx.font =
+                    '600 11px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+                  ctx.fillStyle = '#ffffff';
+                  ctx.fillText(label, pos.x, pos.y);
+                } else {
+                  const lineStartRadius = outerRadius + 4;
+                  const lineEndRadius = outerRadius + 22;
+
+                  const startX = x + Math.cos(angle) * lineStartRadius;
+                  const startY = y + Math.sin(angle) * lineStartRadius;
+                  const endX = x + Math.cos(angle) * lineEndRadius;
+                  const endY = y + Math.sin(angle) * lineEndRadius;
+
+                  ctx.beginPath();
+                  ctx.moveTo(startX, startY);
+                  ctx.lineTo(endX, endY);
+                  ctx.strokeStyle = 'rgba(15, 23, 42, 0.65)';
+                  ctx.lineWidth = 1;
+                  ctx.stroke();
+
+                  const isRightSide = Math.cos(angle) >= 0;
+                  const labelX = endX + (isRightSide ? 6 : -6);
+                  const labelY = endY;
+
+                  ctx.textAlign = isRightSide ? 'left' : 'right';
+                  ctx.font =
+                    '600 9px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+                  ctx.fillStyle = '#0f172a';
+                  ctx.fillText(label, labelX, labelY);
+                }
+              });
+
+              ctx.restore();
+            }
+          };
+
+          new Chart(ctxMotivos, {
+            type: 'doughnut',
+            data: {
+              labels: motivosLabels,
+              datasets: [
+                {
+                  data: motivosValues,
+                  backgroundColor: backgroundColors,
+                  borderColor: '#ffffff',
+                  borderWidth: 2,
+                  hoverOffset: 6
+                }
+              ]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              layout: {
+                padding: {
+                  top: 20,
+                  right: 80,
+                  bottom: 20,
+                  left: 40
+                }
+              },
+              plugins: {
+                legend: {
+                  position: 'right',
+                  labels: {
+                    usePointStyle: true,
+                    padding: 10,
+                    font: {
+                      size: 11
+                    }
+                  }
+                },
+                tooltip: {
+                  callbacks: {
+                    label: function (ctx) {
+                      const label = ctx.label || '';
+                      const value = ctx.parsed || 0;
+                      const dataArr = ctx.dataset.data || [];
+                      const total = dataArr.reduce((acc, v) => acc + (v || 0), 0);
+                      const pct = total ? (value / total) * 100 : 0;
+                      return ` ${label}: ${value.toLocaleString('es-MX')} (${pct.toFixed(1)}%)`;
+                    }
+                  }
+                }
+              },
+              cutout: '55%'
+            },
+            plugins: [pieLabelPlugin]
+          });
+        }
+      }
+
+
+
+      // === GRÁFICA ANTIGÜEDAD PROMEDIO DE BAJAS (BARRAS POR MES) ===
+      const antiguedadCanvas = document.getElementById('antiguedad-bajas-chart');
+
+      if (antiguedadCanvas) {
+        const ctxAnt = antiguedadCanvas.getContext('2d');
+
+        const antiguedadLabels = {{ antiguedad_bajas_labels | tojson }};
+        const antiguedadValues = {{ antiguedad_bajas_values | tojson }};
+        const antiguedadYear   = {{ antiguedad_bajas_year   | tojson }};
+
+        // Plugin para mostrar el valor encima de cada barra
+        const valueLabelPluginAnt = {
+          id: 'valueLabelPluginAnt',
+          afterDatasetsDraw(chart) {
+            const { ctx } = chart;
+            const meta = chart.getDatasetMeta(0);
+            const data = chart.data.datasets[0].data || [];
+
+            ctx.save();
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillStyle = '#0f172a';
+
+            meta.data.forEach((bar, i) => {
+              const val = data[i];
+              if (val == null || isNaN(val) || val === 0) return;
+
+              const x = bar.x;
+              const y = bar.y - 4;
+              ctx.fillText(
+                Number(val).toFixed(1) + ' m',
+                x,
+                y
+              );
+            });
+
+            ctx.restore();
+          }
+        };
+
+        const barCount = antiguedadLabels.length || 12;
+        const maxBarThickness =
+          barCount <= 4 ? 40 :
+          barCount <= 8 ? 32 : 24;
+
+        new Chart(ctxAnt, {
+          type: 'bar',
+          data: {
+            labels: antiguedadLabels,
+            datasets: [
+              {
+                label: 'Antigüedad promedio',
+                data: antiguedadValues,
+                backgroundColor: '#0c376c',
+                borderColor: '#0c376c',
+                borderWidth: 1,
+                borderRadius: 6,
+                maxBarThickness: maxBarThickness
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+              mode: 'index',
+              intersect: false
+            },
+            layout: {
+              padding: {
+                top: 16,
+                right: 8,
+                bottom: 0,
+                left: 0
+              }
+            },
+            plugins: {
+              legend: {
+                display: false
+              },
+              tooltip: {
+                callbacks: {
+                  title: function (items) {
+                    return items[0]?.label || '';
+                  },
+                  label: function (ctx) {
+                    const value = ctx.parsed.y || 0;
+                    return ' Antigüedad promedio: ' + value.toFixed(1) + ' meses';
+                  }
+                }
+              }
+            },
+            scales: {
+              x: {
+                grid: {
+                  display: false
+                },
+                ticks: {
+                  color: '#64748b',
+                  maxRotation: 0,
+                  minRotation: 0
+                }
+              },
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  callback: function (value) {
+                    return value.toFixed ? value.toFixed(1) : value;
+                  },
+                  color: '#64748b'
+                },
+                title: {
+                  display: true,
+                  text: 'Antigüedad promedio (meses)',
+                  color: '#0f172a',
+                  font: {
+                    size: 11,
+                    weight: '600'
+                  }
+                },
+                grid: {
+                  color: 'rgba(148,163,184,0.2)',
+                  drawBorder: false
+                }
+              }
+            }
+          },
+          plugins: [valueLabelPluginAnt]
+        });
+      }
+
+
+    });
+  </script>
+  <script src="https://unpkg.com/feather-icons"></script>
+  <script>feather.replace();</script>
+</body>
+</html>
