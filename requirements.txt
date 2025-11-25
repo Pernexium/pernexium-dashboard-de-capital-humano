@@ -9,3 +9,4 @@ google-auth
 google-api-python-client
 Flask>=2.3
 gunicorn
+openpyxl
