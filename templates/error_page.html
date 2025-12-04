@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>¡Error!</title>
+
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='logos/PXM isotipo 3.png') }}"/>
+
+  <!-- Inter font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+  <style>
+    :root{
+      --bg:#0c376c;
+      --text:#ffffff;
+      --muted:rgba(255,255,255,.82);
+      --btn:#0e4f8a;
+      --btnHover:#0c4476;
+      --outline:rgba(255,255,255,.22);
+      --shadow: 0 18px 60px rgba(0,0,0,.35);
+      --radius: 18px;
+      --secondaryLight:#7fd3ff; /* para hover similar a "secondary-light" */
+    }
+
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; }
+    body{
+      margin:0;
+      font-family:'Inter', sans-serif;
+      color:var(--text);
+      overflow-x:hidden;
+      background:var(--bg);
+    }
+
+    .page{
+      min-height:100%;
+      background: var(--bg);
+      position:relative;
+      overflow:hidden;
+    }
+
+    /* Bolas decorativas */
+    .orb{
+      position:absolute;
+      border-radius:999px;
+      opacity:.9;
+      z-index:0;
+      pointer-events:none;
+      animation: pulseGlow 3.2s ease-in-out infinite;
+      filter: blur(.2px);
+    }
+    .orb.a{
+      /* más pequeña la azul */
+      width:108px; height:108px;
+      left:36px; top:32px;
+      background:#2aa3d6;
+      animation-delay:.2s;
+    }
+    .orb.b{
+      width:125px; height:125px;
+      right:60px; bottom:45px;
+      background:#d49a54;
+      animation-delay:1.2s;
+    }
+    @keyframes pulseGlow{
+      0%,100%{ transform: scale(1); box-shadow: 0 0 0 rgba(255,255,255,0); opacity:.78; }
+      50%{ transform: scale(1.05); box-shadow: 0 0 35px rgba(255,255,255,.10); opacity:.98; }
+    }
+
+    /* Centrado vertical ajustable */
+    .wrap{
+      min-height:100%;
+      display:flex;
+      justify-content:center;
+      padding:48px 18px;
+      position:relative;
+      z-index:1;
+
+      /* baja el bloque para que quede visualmente centrado */
+      align-items:flex-start;
+      padding-top: 16vh;
+      padding-bottom: 10vh;
+      text-align:center;
+    }
+
+    @media (min-height: 800px){
+      .wrap{ padding-top: 18vh; }
+    }
+
+    .center{
+      width:min(920px, 100%);
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      gap:18px;
+      text-align:center;
+    }
+
+    /* Texto tipo logo */
+    .logo-full{
+      display:block;
+      font-weight:800;
+      font-size:27px;
+      color: rgba(255,255,255,.88); /* text-gray-200 feel */
+      letter-spacing:.2px;
+      text-decoration:none;
+      transition: color .2s ease;
+      user-select:none;
+    }
+    .logo-full:hover{ color: var(--secondaryLight); }
+
+    .badge{
+      display:inline-flex;
+      align-items:center;
+      padding:6px 12px;
+      background: rgba(255,255,255,.14);
+      border:1px solid rgba(255,255,255,.18);
+      border-radius:999px;
+      font-weight:800;
+      letter-spacing:.4px;
+      font-size:12px;
+    }
+
+    h1{
+      margin:0;
+      font-size: clamp(40px, 5vw, 66px);
+      line-height:1.05;
+      letter-spacing:-.5px;
+      font-weight:800;
+    }
+    p{
+      margin:0;
+      max-width: 640px;
+      font-size: 18px;
+      line-height:1.55;
+      color: var(--muted);
+      font-weight:500;
+    }
+
+    .actions{
+      display:flex;
+      gap:12px;
+      flex-wrap:wrap;
+      justify-content:center;
+      margin-top:10px;
+    }
+
+    .btn{
+      appearance:none;
+      border:none;
+      cursor:pointer;
+      color:var(--text);
+      background:var(--btn);
+      padding:12px 18px;
+      border-radius:12px;
+      font-weight:800;
+      font-size:15px;
+      box-shadow: 0 10px 26px rgba(0,0,0,.25);
+      transition: transform .12s ease, background .12s ease, box-shadow .12s ease;
+      text-decoration:none;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:10px;
+      min-width: 170px;
+    }
+    .btn:hover{ background:var(--btnHover); transform: translateY(-1px); }
+    .btn:active{ transform: translateY(0px); box-shadow: 0 8px 18px rgba(0,0,0,.22); }
+
+    .btn.secondary{
+      background: transparent;
+      border:1px solid var(--outline);
+      box-shadow: none;
+    }
+    .btn.secondary:hover{ background: rgba(255,255,255,.10); }
+
+    /* Modal soporte */
+    .modal-backdrop{
+      position:fixed;
+      inset:0;
+      background: rgba(0,0,0,.55);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:18px;
+      z-index:50;
+    }
+    .modal{
+      width:min(520px, 100%);
+      background: rgba(12, 55, 108, .98);
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding:18px;
+      text-align:left;
+    }
+    .modal header{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:10px;
+    }
+    .modal h2{
+      margin:0;
+      font-size:18px;
+      letter-spacing:-.2px;
+      font-weight:800;
+    }
+    .modal .sub{
+      color:rgba(255,255,255,.78);
+      font-size:13px;
+      margin-top:4px;
+      line-height:1.35;
+    }
+    .modal .close{
+      background: transparent;
+      border: 1px solid rgba(255,255,255,.22);
+      color: rgba(255,255,255,.92);
+      border-radius: 10px;
+      padding: 8px 10px;
+      cursor:pointer;
+      font-weight:900;
+    }
+    .modal .close:hover{ background: rgba(255,255,255,.10); }
+
+    .support-list{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      margin-top:12px;
+    }
+    .support-item{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      padding:12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.06);
+    }
+    .support-item .meta{
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+    }
+    .support-item .name{ font-weight:900; }
+    .support-item .phone{ color: rgba(255,255,255,.75); font-size:13px; }
+
+    .wa{
+      min-width: 160px;
+      text-align:center;
+      background: #1f7a4d;
+      border: none;
+      box-shadow: 0 10px 26px rgba(0,0,0,.22);
+    }
+    .wa:hover{ background:#19633f; }
+
+    @media (max-width:520px){
+      .support-item{ flex-direction:column; align-items:stretch; }
+      .wa{ width:100%; }
+      .btn{ width:100%; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="page">
+    <div class="orb a" aria-hidden="true"></div>
+    <div class="orb b" aria-hidden="true"></div>
+
+    <main class="wrap" role="main">
+      <section class="center" aria-labelledby="title">
+        <!-- Logo en texto (como pediste) -->
+        <a href="/" class="logo-full">PERNEXIUM</a>
+
+        <div class="badge" aria-label="Código de error">500</div>
+
+        <h1 id="title">Algo salió mal</h1>
+        <p>
+          Ups… ocurrió un problema en el servidor. Intenta de nuevo en unos momentos.
+          Si continúa, contacta a soporte para dar seguimiento.
+        </p>
+
+        <div class="actions">
+          <a class="btn secondary" href="/" aria-label="Volver al inicio">Inicio</a>
+          <button class="btn" type="button" id="openSupport" aria-haspopup="dialog" aria-controls="supportModal">
+            Contacto a Soporte
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <div class="modal-backdrop" id="supportBackdrop" role="presentation">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="supportTitle" id="supportModal">
+        <header>
+          <div>
+            <h2 id="supportTitle">Soporte por WhatsApp</h2>
+            <div class="sub">Se enviará un mensaje con el error 500 y la URL actual.</div>
+          </div>
+          <button class="close" type="button" id="closeSupport" aria-label="Cerrar">✕</button>
+        </header>
+
+        <div class="support-list">
+          <div class="support-item">
+            <div class="meta">
+              <div class="name">Enrique Ramírez</div>
+              <div class="phone">+52 715 113 6840</div>
+            </div>
+            <a class="btn wa" id="waEnrique" target="_blank" rel="noopener">WhatsApp</a>
+          </div>
+
+          <div class="support-item">
+            <div class="meta">
+              <div class="name">Hibran Tapia</div>
+              <div class="phone">+52 56 1551 8463</div>
+            </div>
+            <a class="btn wa" id="waHibran" target="_blank" rel="noopener">WhatsApp</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const openBtn = document.getElementById('openSupport');
+      const closeBtn = document.getElementById('closeSupport');
+      const backdrop = document.getElementById('supportBackdrop');
+
+      const enrique = "5217151136840";
+      const hibran  = "5215615518463";
+
+      function buildText(nombre) {
+        const url = window.location.href;
+        return encodeURIComponent(`Hola ${nombre}, tengo un error 500. URL: ${url} ¿Me pueden apoyar, por favor?`);
+      }
+
+      function setLinks() {
+        document.getElementById('waEnrique').href = `https://wa.me/${enrique}?text=${buildText('Enrique')}`;
+        document.getElementById('waHibran').href  = `https://wa.me/${hibran}?text=${buildText('Hibran')}`;
+      }
+
+      function openModal() {
+        setLinks();
+        backdrop.style.display = 'flex';
+        closeBtn.focus();
+      }
+
+      function closeModal() {
+        backdrop.style.display = 'none';
+        openBtn.focus();
+      }
+
+      openBtn.addEventListener('click', openModal);
+      closeBtn.addEventListener('click', closeModal);
+
+      backdrop.addEventListener('click', (e) => {
+        if (e.target === backdrop) closeModal();
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && backdrop.style.display === 'flex') closeModal();
+      });
+    })();
+  </script>
+</body>
+</html>
