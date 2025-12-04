@@ -46,7 +46,7 @@ def build_sheets_service():
     return build("sheets", "v4", credentials=creds, cache_discovery=False)
 
 def fetch_sheet_data(service, sheet_name):
-    rng  = f"{sheet_name}!A1:BT"
+    rng  = f"{sheet_name}!A1:ZZ"
     vals = (service.spreadsheets()
                   .values()
                   .get(spreadsheetId=SHEET_ID, range=rng)
@@ -384,6 +384,16 @@ def index():
         lambda x: 1 if str(x).strip() in
         ['Aceptado', 'Rechazado', 'No aceptado', 'Fallo en Role-Play', 'Rechaza la vacante'] else 0
     )
+    data_reclutamiento["monto_pagado"] = (
+        data_reclutamiento["monto_pagado"]
+            .astype(str)
+            .str.replace(r"[^\d,.\-]", "", regex=True)
+            .str.replace(".", "", regex=False)
+            .str.replace(",", ".", regex=False)
+    )
+    data_reclutamiento["monto_pagado"] = pd.to_numeric(
+        data_reclutamiento["monto_pagado"], errors="coerce"
+    ).fillna(0)
     data_reclutamiento['monto_pagado_distribuido'] = 0.0
     for folio in data_reclutamiento.folio.unique():
         if folio is None or pd.isna(folio):
@@ -638,6 +648,7 @@ def index():
     # CANALES DE INGRESO - PLANTILLA Y PAUTA
     # PLANTILLA
     df = df_plantilla_activa.copy()
+
     df['FECHA DE INGRESO'] = pd.to_datetime(
         df['FECHA DE INGRESO'],
         dayfirst=True,
@@ -647,6 +658,8 @@ def index():
     anio_actual = pd.Timestamp.today().year
     df = df[df['FECHA DE INGRESO'].dt.year == anio_actual]
     df['anio_mes'] = df['FECHA DE INGRESO'].dt.strftime('%Y-%m')
+    print(df_plantilla_activa.columns.tolist())
+
     df_grouped = (
         df
         .groupby(['anio_mes', 'FUENTE'])
