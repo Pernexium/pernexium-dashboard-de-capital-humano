@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from werkzeug.exceptions import HTTPException
 from flask import Flask, render_template, request 
 
 ######################################## CARGA VARIABLES #######################################
@@ -72,8 +73,8 @@ def moneda_es(x):
 ############################################# DASHBOARD ##############################################
 
 app = Flask(__name__)
-@app.route("/", methods=["GET"])
 
+@app.route("/", methods=["GET"])
 def index():
     
     ################################# BASES DE DATOS ##################################
@@ -917,8 +918,17 @@ def index():
         campania_seleccionada=campania_seleccionada,
     )
 
+@app.errorhandler(500)
+def handle_500(e):
+    return render_template("error_page.html"), 500
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    if isinstance(e, HTTPException):
+        return e
+    return render_template("error_page.html"), 500
 
 ######################################### EJECUTADOR #############################################
 
 if __name__ == "__main__":
-    app.run(debug = True, host = "0.0.0.0", port = 5000)
+    app.run(debug = False, host = "0.0.0.0", port = 5000)
