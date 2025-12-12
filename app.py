@@ -17,23 +17,32 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
 from werkzeug.exceptions import HTTPException
 from flask import Flask, render_template, request 
 
 ######################################## CARGA VARIABLES #######################################
 
-S3_SA_KEY = os.getenv("S3_SA_KEY")
-SHEET_ID  = os.getenv("SHEET_ID")
-SCOPES    = json.loads(os.getenv("SCOPES"))
-S3_BUCKET = os.getenv("S3_BUCKET")
-ONE_DRIVE = os.getenv("ONE_DRIVE")
+load_dotenv()
+
+S3_SA_KEY      = os.getenv("S3_SA_KEY")
+SHEET_ID       = os.getenv("SHEET_ID")      # Plantillas / bajas
+SHEET_ID_2     = os.getenv("SHEET_ID_2")    # Reclutamiento (Hoja 1)
+SCOPES         = json.loads(os.getenv("SCOPES")) if os.getenv("SCOPES") else []
+S3_BUCKET      = os.getenv("S3_BUCKET")
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
 AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
 
-load_dotenv()
-s3 = boto3.client("s3",aws_access_key_id=AWS_ACCESS_KEY,aws_secret_access_key=AWS_SECRET_KEY)
+# Cliente S3 para service account de Sheets “general”
+s3 = boto3.client(
+    "s3",
+    aws_access_key_id=AWS_ACCESS_KEY,
+    aws_secret_access_key=AWS_SECRET_KEY
+)
 
-################################# ACCESO A GOOGLE SHEETS #######################################
+################################# ACCESO A GOOGLE SHEETS (SERVICE ACCOUNT) #####################
 
 def get_service_account_credentials():
     obj       = s3.get_object(Bucket=S3_BUCKET, Key=S3_SA_KEY)
@@ -46,7 +55,10 @@ def build_sheets_service():
     return build("sheets", "v4", credentials=creds, cache_discovery=False)
 
 def fetch_sheet_data(service, sheet_name):
-    rng  = f"{sheet_name}!A1:ZZ"
+    # IMPORTANTE: nombre de hoja entre comillas simples
+    safe_sheet = sheet_name.replace("'", "''")
+    rng  = f"'{safe_sheet}'!A1:ZZ"
+
     vals = (service.spreadsheets()
                   .values()
                   .get(spreadsheetId=SHEET_ID, range=rng)
@@ -70,6 +82,150 @@ def moneda_es(x):
     except Exception:
         return '$0,00'
 
+MESES_ES = ["ene", "feb", "mar", "abr", "may", "jun", 
+            "jul", "ago", "sep", "oct", "nov", "dic"]
+
+MESES_ES_CORTO = ["Ene", "Feb", "Mar", "Abr", "May", "Jun",
+                  "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+
+def normalizar_mes(valor):
+    if pd.isna(valor):
+        return np.nan
+
+    if isinstance(valor, datetime):
+        dt_val = valor
+    else:
+        s = str(valor).strip().lower()
+
+        # Si ya viene como "oct-25" lo dejamos
+        try:
+            return s
+        except Exception:
+            pass
+
+        # Corrige tipos "03/11/20225"
+        s_fix = s
+        parts = s.split("/")
+        if len(parts) == 3 and len(parts[2]) > 4:
+            s_fix = parts[0] + "/" + parts[1] + "/" + parts[2][:4]
+
+        try:
+            dt_val = pd.to_datetime(s_fix, dayfirst=True, errors="coerce")
+        except Exception:
+            return np.nan
+
+        if pd.isna(dt_val):
+            return np.nan    
+
+    mes = MESES_ES[dt_val.month - 1]
+    return f"{mes}-{str(dt_val.year)[-2:]}"
+
+def limpiar_nombre(nombre: str) -> str:
+    if pd.isna(nombre):
+        return ""
+    
+    nombre = str(nombre).strip()
+    nombre = unicodedata.normalize("NFKD", nombre)
+    nombre = "".join(c for c in nombre if not unicodedata.combining(c))
+    nombre = nombre.replace("ñ", "n").replace("Ñ", "n")
+    nombre = nombre.lower()
+    nombre = re.sub(r"[^a-z\s]", "", nombre)
+    nombre = re.sub(r"\s+", " ", nombre).strip()
+    return nombre
+
+def get_data_sheets():
+    """
+    Datos de reclutamiento desde GOOGLE SHEETS (SHEET_ID_2, Hoja 1)
+    usando OAuth y tokens guardados en S3.
+    """
+    if not SHEET_ID_2:
+        raise RuntimeError("SHEET_ID_2 no está definido en las variables de entorno.")
+
+    SHEET_ID_LEADS   = SHEET_ID_2
+    SHEET_NAME_LEADS = "Hoja 1"
+    S3_BUCKET_TOKENS = "gcp-tokens"
+
+    S3_CLIENT_SECRET = "credentials_hibran_sheets.json"
+    S3_TOKEN_READ    = "token_hibran_sheets.json"
+    S3_TOKEN_WRITE   = "token_hibran_sheets_escritura.json"
+
+    SCOPES_READ  = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+    SCOPES_WRITE = ["https://www.googleapis.com/auth/spreadsheets"]
+
+    # Cliente S3 para los tokens
+    s3_tokens = boto3.client(
+        "s3",
+        aws_access_key_id=AWS_ACCESS_KEY,
+        aws_secret_access_key=AWS_SECRET_KEY,
+    )
+
+    def load_json_from_s3(key):
+        obj = s3_tokens.get_object(Bucket=S3_BUCKET_TOKENS, Key=key)
+        return json.loads(obj["Body"].read().decode("utf-8"))
+
+    def save_to_s3(key, content):
+        s3_tokens.put_object(Bucket=S3_BUCKET_TOKENS, Key=key, Body=content.encode("utf-8"))
+
+    def get_creds(secret_file, token_file, scopes):
+        client_config = load_json_from_s3(secret_file)
+        try:
+            token_json = load_json_from_s3(token_file)
+            creds = Credentials.from_authorized_user_info(token_json, scopes)
+        except Exception:
+            creds = None
+
+        if creds and creds.valid:
+            return creds
+
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                save_to_s3(token_file, creds.to_json())
+                return creds
+            except Exception:
+                pass
+
+        flow = InstalledAppFlow.from_client_config(client_config, scopes)
+        creds = flow.run_local_server(port=8080, prompt="consent", access_type="offline")
+        save_to_s3(token_file, creds.to_json())
+        return creds
+
+    def build_read_service():
+        return build(
+            "sheets",
+            "v4",
+            credentials=get_creds(S3_CLIENT_SECRET, S3_TOKEN_READ, SCOPES_READ)
+        )
+
+    service_r = build_read_service()
+
+    def fetch_sheet_df(service):
+        safe_sheet = SHEET_NAME_LEADS.replace("'", "''")
+        result = service.spreadsheets().values().get(
+            spreadsheetId=SHEET_ID_LEADS,
+            range=f"'{safe_sheet}'!A1:ZZ5000"
+        ).execute()
+
+        values = result.get("values", [])
+        if not values:
+            return pd.DataFrame()
+
+        headers = values[0]
+        rows    = values[1:]
+
+        max_len = max(len(headers), *[len(r) for r in rows]) if rows else len(headers)
+        headers = headers + [f"COL_{i}" for i in range(len(headers), max_len)]
+
+        norm_rows = []
+        for r in rows:
+            if len(r) < max_len:
+                r += [None] * (max_len - len(r))
+            norm_rows.append(r[:max_len])
+
+        return pd.DataFrame(norm_rows, columns=headers)
+
+    return fetch_sheet_df(service_r)
+
 ############################################# DASHBOARD ##############################################
 
 app = Flask(__name__)
@@ -79,29 +235,27 @@ def index():
     
     ################################# BASES DE DATOS ##################################
     
-    ################################# BASES DE DATOS ##################################
-
-    # 1) Filtro de campaña desde la URL (?campania=...)
     campania_param = request.args.get("campania", default="", type=str).strip()
     campania_seleccionada = campania_param or None
 
-    # 2) Cargar datos completos (sin filtrar)
-    response = requests.get(ONE_DRIVE, allow_redirects=True)
-    response.raise_for_status()
-    df_reclutamiento_full = pd.read_excel(BytesIO(response.content), sheet_name="Reclutamiento")
-
     service = build_sheets_service()
+
+    # Reclutamiento viene de SHEET_ID_2 (Hoja 1)
+    df_reclutamiento_full = get_data_sheets()
+
+    # Plantillas / bajas vienen de SHEET_ID
     df_plantilla_activa_full     = fetch_sheet_data(service, "PLANTILLA AJUSTE")
     df_plantilla_autorizada_full = fetch_sheet_data(service, "PLANTILLA AUTORIZADA")
     df_plantilla_bajas_full      = fetch_sheet_data(service, "PLANTILLA BAJAS")
 
-    # 3) Catálogo de campañas para el combo (sin filtrar)
+    # Catálogo de campañas (reclutamiento + plantilla)
     campanias_reclut = set(
         df_reclutamiento_full.get("Campaña", pd.Series(dtype=str))
         .dropna()
         .astype(str)
         .str.strip()
-    )
+    ) if "Campaña" in df_reclutamiento_full.columns else set()
+
     campanias_sheets = set(
         df_plantilla_activa_full.get("CAMPAÑA", pd.Series(dtype=str))
         .dropna()
@@ -110,14 +264,13 @@ def index():
     )
     campanias = sorted(campanias_reclut.union(campanias_sheets))
 
-    # 4) Copias filtradas (las que usará el resto del dashboard)
-    df_reclutamiento      = df_reclutamiento_full.copy()
-    df_plantilla_activa   = df_plantilla_activa_full.copy()
+    # Copias filtradas
+    df_reclutamiento        = df_reclutamiento_full.copy()
+    df_plantilla_activa     = df_plantilla_activa_full.copy()
     df_plantilla_autorizada = df_plantilla_autorizada_full.copy()
-    df_plantilla_bajas    = df_plantilla_bajas_full.copy()
+    df_plantilla_bajas      = df_plantilla_bajas_full.copy()
 
     if campania_seleccionada:
-        # OneDrive: columna "Campaña"
         if "Campaña" in df_reclutamiento.columns:
             df_reclutamiento = df_reclutamiento[
                 df_reclutamiento["Campaña"]
@@ -126,7 +279,6 @@ def index():
                     == campania_seleccionada
             ]
 
-        # Sheets: columna "CAMPAÑA"
         if "CAMPAÑA" in df_plantilla_activa.columns:
             df_plantilla_activa = df_plantilla_activa[
                 df_plantilla_activa["CAMPAÑA"]
@@ -151,7 +303,6 @@ def index():
                     == campania_seleccionada
             ]
 
-
     ##################################### KPIs ######################################
     
     mapa_meses = {
@@ -159,9 +310,10 @@ def index():
         5: 'MAYO', 6: 'JUNIO', 7: 'JULIO', 8: 'AGOSTO',
         9: 'SEPTIEMBRE', 10: 'OCTUBRE', 11: 'NOVIEMBRE', 12: 'DICIEMBRE'
     }
-    mes_actual_num = dt.datetime.today().month
+    mes_actual_num    = dt.datetime.today().month
     mes_actual_nombre = mapa_meses[mes_actual_num]
-    # --- Plantilla autorizada ---
+
+    # Plantilla autorizada
     df_plantilla_autorizada_actual = df_plantilla_autorizada.copy()
     df_plantilla_autorizada_actual['MES'] = (
         df_plantilla_autorizada_actual['MES']
@@ -186,7 +338,8 @@ def index():
         .loc[df_plantilla_autorizada_actual['AREA'] == "ESTRUCTURA", 'PERSONAL']
         .sum()
     )
-    # --- Género ---
+
+    # Género
     genero = df_plantilla_activa['GENERO']
     genero_limpio = (
         genero.dropna()
@@ -200,9 +353,10 @@ def index():
         'Cantidad': conteo_GENERO,
         'Porcentaje (%)': porcentaje_GENERO
     })
-    genero_cantidad_dict = resumen_GENERO['Cantidad'].to_dict()
+    genero_cantidad_dict   = resumen_GENERO['Cantidad'].to_dict()
     genero_porcentaje_dict = resumen_GENERO['Porcentaje (%)'].to_dict()
-    # --- Nómina ---
+
+    # Nómina
     df_nomina = df_plantilla_activa.copy()
     df_nomina = df_nomina[df_nomina['SUELDO MENSUAL'].notna()]
 
@@ -218,17 +372,18 @@ def index():
         .sum()
         .reset_index(name='TOTAL NOMINA')
     )
-    total_general_nomina = float(df_nomina['SUELDO MENSUAL'].sum())
+    total_general_nomina     = float(df_nomina['SUELDO MENSUAL'].sum())
     total_general_nomina_fmt = moneda_es(total_general_nomina)
-    nomina_formateada = nomina_por_area.copy()
+    nomina_formateada        = nomina_por_area.copy()
     nomina_formateada['TOTAL NOMINA'] = nomina_formateada['TOTAL NOMINA'].map(moneda_es)
-    nomina_por_area_dict = nomina_por_area.set_index('AREA')['TOTAL NOMINA'].to_dict()
+    nomina_por_area_dict     = nomina_por_area.set_index('AREA')['TOTAL NOMINA'].to_dict()
     nomina_por_area_fmt_dict = nomina_formateada.set_index('AREA')['TOTAL NOMINA'].to_dict()
-    nomina_estructura = float(nomina_por_area_dict.get('ESTRUCTURA', 0.0))
-    nomina_operacion = float(nomina_por_area_dict.get('OPERACION', 0.0))
-    nomina_estructura_fmt = nomina_por_area_fmt_dict.get('ESTRUCTURA', moneda_es(0))
-    nomina_operacion_fmt = nomina_por_area_fmt_dict.get('OPERACION', moneda_es(0))
-    # --- Contratos ---
+    nomina_estructura        = float(nomina_por_area_dict.get('ESTRUCTURA', 0.0))
+    nomina_operacion         = float(nomina_por_area_dict.get('OPERACION', 0.0))
+    nomina_estructura_fmt    = nomina_por_area_fmt_dict.get('ESTRUCTURA', moneda_es(0))
+    nomina_operacion_fmt     = nomina_por_area_fmt_dict.get('OPERACION', moneda_es(0))
+
+    # Contratos
     df_contratos = df_plantilla_activa.copy()
     df_contratos['CONTRATOS'] = (
         pd.to_numeric(
@@ -254,169 +409,218 @@ def index():
         .sort_values('CONTRATOS', ascending=False)
     )
     contratos_por_area_dict = contratos_por_area.set_index('AREA')['CONTRATOS'].to_dict()
-    contratos_total = int(contratos_por_area['CONTRATOS'].sum())
-    contratos_estructura = int(contratos_por_area_dict.get('ESTRUCTURA', 0))
-    contratos_operacion = int(contratos_por_area_dict.get('OPERACION', 0))
+    contratos_total         = int(contratos_por_area['CONTRATOS'].sum())
+    contratos_estructura    = int(contratos_por_area_dict.get('ESTRUCTURA', 0))
+    contratos_operacion     = int(contratos_por_area_dict.get('OPERACION', 0))
 
-    ############################################# GRAFICAS ##############################################
-    
-    # --- FUNEL DE RECLUTAMIENTO ---
-    def limpiar_nombre(nombre: str) -> str:
-        if pd.isna(nombre):
-            return ""
-        nombre = str(nombre).strip()
-        nombre = unicodedata.normalize("NFKD", nombre)
-        nombre = "".join(c for c in nombre if not unicodedata.combining(c))
-        nombre = nombre.replace("ñ", "n").replace("Ñ", "n")
-        nombre = nombre.lower()
-        nombre = re.sub(r"[^a-z\s]", "", nombre)
-        nombre = re.sub(r"\s+", " ", nombre).strip()
-        return nombre
-    MESES_ES = ["ene", "feb", "mar", "abr", "may", "jun", 
-                "jul", "ago", "sep", "oct", "nov", "dic"]
-    def normalizar_mes(valor):
-        if pd.isna(valor):
-            return np.nan
-        if isinstance(valor, datetime):
-            dt_val = valor
-        else:
-            s = str(valor).strip().lower()
-            try:
-                return s
-            except Exception:
-                pass
-            s_fix = s
-            parts = s.split("/")
-            if len(parts) == 3 and len(parts[2]) > 4:
-                s_fix = parts[0] + "/" + parts[1] + "/" + parts[2][:4]
-            try:
-                dt_val = pd.to_datetime(s_fix, dayfirst=True, errors="coerce")
-            except Exception:
-                return np.nan
-            if pd.isna(dt_val):
-                return np.nan    
-        mes = MESES_ES[dt_val.month - 1]
-        return f"{mes}-{str(dt_val.year)[-2:]}"
-    data_reclutamiento = df_reclutamiento
+    ############################################# FUNNEL RECLUTAMIENTO #################################
+
+    data_reclutamiento = df_reclutamiento_full.copy()
     data_reclutamiento = data_reclutamiento.dropna(axis=0, how='all')
-    data_reclutamiento.columns = data_reclutamiento.iloc[3, :]
-    data_reclutamiento = data_reclutamiento[4:]
-    data_reclutamiento = data_reclutamiento.reset_index(drop=True)
-    data_reclutamiento = data_reclutamiento[1:]
-    data_reclutamiento.columns = [
-        col.strip()
-           .replace(" ", "_")
-           .replace(".", "")
-           .replace(":", "")
-           .lower()
-           .replace("ó", "o")
-           .replace("í", "i")
-           .replace("é", "e")
-           .replace("ú", "u")
-           .replace("ñ", "n")
-           .replace("á", "a")
-        for col in data_reclutamiento.columns
-    ]
-    data_reclutamiento.rename(columns={"¿es_viable?4": "es_viable_tecnica"}, inplace=True)
-    data_reclutamiento.rename(columns={"¿es_viable?": "es_viable_psicometrica"}, inplace=True)
-    data_reclutamiento.columns = [
-        col.replace("?", "").replace("¿", "").replace("4", "").replace("ii_~_iii_", "")
-        for col in data_reclutamiento.columns
-    ]
-    data_reclutamiento.nombre_candidato = data_reclutamiento.nombre_candidato.apply(limpiar_nombre)
-    data_reclutamiento.mes = data_reclutamiento.mes.apply(normalizar_mes)
-    data_reclutamiento.iv_realiza_psicometrias = data_reclutamiento.iv_realiza_psicometrias.apply(
-        lambda x: x.strip().lower().capitalize() if isinstance(x, str) else x
-    )
-    data_reclutamiento.campana = data_reclutamiento.campana.apply(
-        lambda x: x.strip().lower().capitalize() if isinstance(x, str) else x
-    )
-    data_reclutamiento.campana = data_reclutamiento.campana.apply(
-        lambda x: x.replace("Fmp (posiciones)", "Fmp posiciones").replace("Fmp posiciones", "Fmp (posiciones)")
-        if isinstance(x, str) else x
-    )
-    data_reclutamiento.se_asigna_a_campana = data_reclutamiento.se_asigna_a_campana.apply(
-        lambda x: x.strip().lower().capitalize() if isinstance(x, str) else x
-    )
-    data_reclutamiento.se_asigna_a_campana = data_reclutamiento.se_asigna_a_campana.apply(
-        lambda x: x.replace("Fmp (posiciones)", "Fmp posiciones").replace("Fmp posiciones", "Fmp (posiciones)")
-        if isinstance(x, str) else x
-    )
-    data_reclutamiento['fecha_publicacion'] = pd.to_datetime(
-        data_reclutamiento['fecha_publicacion'], errors="coerce"
-    )
-    data_reclutamiento.escolaridad = data_reclutamiento.escolaridad.apply(
-        lambda x: x.strip().lower()
-        .replace("bachillerato", "preparatoria")
-        .replace("preparatoria terminado", "preparatoria terminada")
-        .replace("preparatoria trunco", "preparatoria trunca")
-        .replace("preparaatoria", "preparatoria")
-        .replace("prepa ", "preparatoria ")
-        if isinstance(x, str) else x
-    )
-    data_reclutamiento.calificacion = data_reclutamiento.calificacion.apply(
-        lambda x: str(x).strip().replace("Baja", "7")
-    )
-    data_reclutamiento.fecha_de_ingreso = pd.to_datetime(data_reclutamiento.fecha_de_ingreso, errors="coerce")
-    data_reclutamiento.fecha_de_ingreso = data_reclutamiento.fecha_de_ingreso.dt.strftime("%Y-%m-%d")
-    data_reclutamiento.fecha_de_entrevista = data_reclutamiento.fecha_de_entrevista.apply(
-        lambda x: np.nan if x == '-' else x
-    )
-    data_reclutamiento.fecha_de_ingreso = data_reclutamiento.fecha_de_ingreso.apply(
-        lambda x: np.nan if x == '-' else x
-    )
-    data_reclutamiento.fecha_de_capacitacion = pd.to_datetime(
-        data_reclutamiento.fecha_de_capacitacion, errors="coerce"
-    )
-    data_reclutamiento.fecha_de_capacitacion = data_reclutamiento.fecha_de_capacitacion.apply(
-        lambda x: np.nan if x == '-' else x
-    )
-    data_reclutamiento['bin_aceptado'] = data_reclutamiento['aceptada'].apply(
-        lambda x: 1 if str(x).strip().lower() == 'si' else 0
-    )
-    data_reclutamiento['bin_agenda_entrevista'] = data_reclutamiento['fecha_de_entrevista'].isna().apply(
-        lambda x: 0 if x else 1
-    )
-    data_reclutamiento['bin_ingreso'] = data_reclutamiento['fecha_de_ingreso'].isna().apply(
-        lambda x: 0 if x else 1
-    )
-    data_reclutamiento['bin_asiste_entrevista'] = data_reclutamiento['motivo'].apply(
-        lambda x: 1 if str(x).strip() in
-        ['Aceptado', 'Rechazado', 'No aceptado', 'Fallo en Role-Play', 'Rechaza la vacante'] else 0
-    )
-    data_reclutamiento["monto_pagado"] = (
-        data_reclutamiento["monto_pagado"]
-            .astype(str)
-            .str.replace(r"[^\d,.\-]", "", regex=True)
-            .str.replace(".", "", regex=False)
-            .str.replace(",", ".", regex=False)
-    )
-    data_reclutamiento["monto_pagado"] = pd.to_numeric(
-        data_reclutamiento["monto_pagado"], errors="coerce"
-    ).fillna(0)
-    data_reclutamiento['monto_pagado_distribuido'] = 0.0
-    for folio in data_reclutamiento.folio.unique():
-        if folio is None or pd.isna(folio):
-            continue
-        df_tmp = data_reclutamiento.query("folio == @folio")
-        costo_lead = df_tmp.monto_pagado.iloc[0] / len(df_tmp)
-        data_reclutamiento.loc[data_reclutamiento.folio == folio, 'monto_pagado_distribuido'] = costo_lead
-    df_funnel_mes = (
-        data_reclutamiento
-        .dropna(subset=['fecha_publicacion'])
-        .groupby(pd.Grouper(key='fecha_publicacion', freq='MS'))
-        .agg({
-            'fecha_publicacion': 'count',       
-            'bin_agenda_entrevista': 'sum',
-            'bin_asiste_entrevista': 'sum',
-            'bin_aceptado': 'sum',
-            'bin_ingreso': 'sum'
-        })
-        .rename(columns={'fecha_publicacion': 'leads_generados'})
-        .reset_index()
-        .sort_values('fecha_publicacion')
-    )
+
+    if not data_reclutamiento.empty and data_reclutamiento.shape[0] > 3:
+        # Encabezado = segunda fila
+        data_reclutamiento.columns = data_reclutamiento.iloc[1, :]
+        data_reclutamiento = data_reclutamiento[2:]
+
+        # eliminar fila de ejemplo
+        data_reclutamiento = data_reclutamiento.reset_index(drop=True)
+        data_reclutamiento = data_reclutamiento[1:]
+
+        # Normalizar nombres de columnas
+        data_reclutamiento.columns = [
+            col.strip()
+               .replace(" ", "_")
+               .replace(".", "")
+               .replace(":", "")
+               .lower()
+               .replace("ó", "o")
+               .replace("í", "i")
+               .replace("é", "e")
+               .replace("ú", "u")
+               .replace("ñ", "n")
+               .replace("á", "a")
+            for col in data_reclutamiento.columns
+        ]
+        data_reclutamiento.rename(columns={"¿es_viable?4": "es_viable_tecnica"}, inplace=True)
+        data_reclutamiento.rename(columns={"¿es_viable?": "es_viable_psicometrica"}, inplace=True)
+        data_reclutamiento.columns = [
+            col.replace("?", "").replace("¿", "").replace("4", "").replace("ii_~_iii_", "")
+            for col in data_reclutamiento.columns
+        ]
+
+        # Nombre
+        if "nombre_candidato" in data_reclutamiento.columns:
+            data_reclutamiento["nombre_candidato"] = data_reclutamiento["nombre_candidato"].apply(limpiar_nombre)
+
+        # Mes
+        if "mes" in data_reclutamiento.columns:
+            data_reclutamiento["mes"] = data_reclutamiento["mes"].apply(normalizar_mes)
+
+        # IV psicometrías
+        if "iv_realiza_psicometrias" in data_reclutamiento.columns:
+            data_reclutamiento["iv_realiza_psicometrias"] = data_reclutamiento["iv_realiza_psicometrias"].apply(
+                lambda x: x.strip().lower().capitalize() if isinstance(x, str) else x
+            )
+
+        # Campaña lead
+        if "campana" in data_reclutamiento.columns:
+            data_reclutamiento["campana"] = data_reclutamiento["campana"].apply(
+                lambda x: x.strip().lower().capitalize() if isinstance(x, str) else x
+            )
+            data_reclutamiento["campana"] = data_reclutamiento["campana"].apply(
+                lambda x: x.replace("Fmp (posiciones)", "Fmp posiciones").replace("Fmp posiciones", "Fmp (posiciones)")
+                if isinstance(x, str) else x
+            )
+
+        # Campaña asignada
+        if "se_asigna_a_campana" in data_reclutamiento.columns:
+            data_reclutamiento["se_asigna_a_campana"] = data_reclutamiento["se_asigna_a_campana"].apply(
+                lambda x: x.strip().lower().capitalize() if isinstance(x, str) else x
+            )
+            data_reclutamiento["se_asigna_a_campana"] = data_reclutamiento["se_asigna_a_campana"].apply(
+                lambda x: x.replace("Fmp (posiciones)", "Fmp posiciones").replace("Fmp posiciones", "Fmp (posiciones)")
+                if isinstance(x, str) else x
+            )
+
+        # Filtro por campaña en el funnel
+        if campania_seleccionada and "campana" in data_reclutamiento.columns:
+            data_reclutamiento = data_reclutamiento[
+                data_reclutamiento["campana"]
+                    .astype(str)
+                    .str.strip()
+                    .str.lower()
+                    == campania_seleccionada.strip().lower()
+            ]
+
+        # Fechas
+        if "fecha_publicacion" in data_reclutamiento.columns:
+            data_reclutamiento["fecha_publicacion"] = pd.to_datetime(
+                data_reclutamiento["fecha_publicacion"], errors="coerce"
+            )
+
+        # Escolaridad
+        if "escolaridad" in data_reclutamiento.columns:
+            data_reclutamiento["escolaridad"] = data_reclutamiento["escolaridad"].apply(
+                lambda x: x.strip().lower()
+                .replace("bachillerato", "preparatoria")
+                .replace("preparatoria terminado", "preparatoria terminada")
+                .replace("preparatoria trunco", "preparatoria trunca")
+                .replace("preparaatoria", "preparatoria")
+                .replace("prepa ", "preparatoria ")
+                if isinstance(x, str) else x
+            )
+
+        # Calificación
+        if "calificacion" in data_reclutamiento.columns:
+            data_reclutamiento["calificacion"] = data_reclutamiento["calificacion"].apply(
+                lambda x: str(x).strip().replace("Baja", "7")
+            )
+
+        # Fecha ingreso / entrevista / capacitación
+        if "fecha_de_ingreso" in data_reclutamiento.columns:
+            data_reclutamiento["fecha_de_ingreso"] = pd.to_datetime(
+                data_reclutamiento["fecha_de_ingreso"], errors="coerce"
+            )
+            data_reclutamiento["fecha_de_ingreso"] = data_reclutamiento["fecha_de_ingreso"].apply(
+                lambda x: np.nan if x == '-' else x
+            )
+
+        if "fecha_de_entrevista" in data_reclutamiento.columns:
+            data_reclutamiento["fecha_de_entrevista"] = data_reclutamiento["fecha_de_entrevista"].apply(
+                lambda x: np.nan if x == '-' else x
+            )
+
+        if "fecha_de_capacitacion" in data_reclutamiento.columns:
+            data_reclutamiento["fecha_de_capacitacion"] = pd.to_datetime(
+                data_reclutamiento["fecha_de_capacitacion"], errors="coerce"
+            )
+            data_reclutamiento["fecha_de_capacitacion"] = data_reclutamiento["fecha_de_capacitacion"].apply(
+                lambda x: np.nan if x == '-' else x
+            )
+
+        # Variables sintéticas
+        if "aceptada" in data_reclutamiento.columns:
+            data_reclutamiento['bin_aceptado'] = data_reclutamiento['aceptada'].apply(
+                lambda x: 1 if str(x).strip().lower() == 'si' else 0
+            )
+        else:
+            data_reclutamiento['bin_aceptado'] = 0
+
+        if "fecha_de_entrevista" in data_reclutamiento.columns:
+            data_reclutamiento['bin_agenda_entrevista'] = data_reclutamiento['fecha_de_entrevista'].isna().apply(
+                lambda x: 0 if x else 1
+            )
+        else:
+            data_reclutamiento['bin_agenda_entrevista'] = 0
+
+        if "fecha_de_ingreso" in data_reclutamiento.columns:
+            data_reclutamiento['bin_ingreso'] = data_reclutamiento['fecha_de_ingreso'].isna().apply(
+                lambda x: 0 if x else 1
+            )
+        else:
+            data_reclutamiento['bin_ingreso'] = 0
+
+        if "motivo" in data_reclutamiento.columns:
+            data_reclutamiento['bin_asiste_entrevista'] = data_reclutamiento['motivo'].apply(
+                lambda x: 1 if str(x).strip() in
+                ['Aceptado', 'Rechazado', 'No aceptado', 'Fallo en Role-Play', 'Rechaza la vacante'] else 0
+            )
+        else:
+            data_reclutamiento['bin_asiste_entrevista'] = 0
+
+        # Monto pagado
+        if "monto_pagado" in data_reclutamiento.columns:
+            data_reclutamiento["monto_pagado"] = data_reclutamiento["monto_pagado"].apply(
+                lambda x: str(x).replace(",", "").replace("$", "") if pd.notna(x) else x
+            )
+            data_reclutamiento["monto_pagado"] = data_reclutamiento["monto_pagado"].apply(
+                lambda x: float(x) if pd.notna(x) and str(x).replace(".", "", 1).isdigit() else 0.0
+            )
+        else:
+            data_reclutamiento["monto_pagado"] = 0.0
+
+        data_reclutamiento['monto_pagado_distribuido'] = 0.0
+        if "folio" in data_reclutamiento.columns:
+            for folio in data_reclutamiento["folio"].unique():
+                if folio is None or pd.isna(folio):
+                    continue
+                df_tmp = data_reclutamiento.query("folio == @folio")
+                if len(df_tmp) == 0:
+                    continue
+                costo_lead = df_tmp["monto_pagado"].iloc[0] / len(df_tmp)
+                data_reclutamiento.loc[data_reclutamiento["folio"] == folio, 'monto_pagado_distribuido'] = costo_lead
+
+        # Ordenar
+        if "fecha_publicacion" in data_reclutamiento.columns:
+            data_reclutamiento = data_reclutamiento.sort_values(by='fecha_publicacion')
+
+        # Funnel mensual
+        if "fecha_publicacion" in data_reclutamiento.columns:
+            df_funnel_mes = (
+                data_reclutamiento
+                .dropna(subset=['fecha_publicacion'])
+                .groupby(pd.Grouper(key='fecha_publicacion', freq='MS'))
+                .agg({
+                    'fecha_publicacion': 'count',
+                    'bin_agenda_entrevista': 'sum',
+                    'bin_asiste_entrevista': 'sum',
+                    'bin_aceptado': 'sum',
+                    'bin_ingreso': 'sum',
+                    'monto_pagado_distribuido': 'sum'
+                })
+                .rename(columns={'fecha_publicacion': 'leads_generados'})
+                .reset_index()
+                .sort_values('fecha_publicacion')
+            )
+        else:
+            df_funnel_mes = pd.DataFrame()
+    else:
+        data_reclutamiento = pd.DataFrame()
+        df_funnel_mes      = pd.DataFrame()
+
     df_funnel_ultimos_3 = df_funnel_mes.tail(3)
+
     funnel_labels = [
         "Leads en Facebook",
         "Agenda Entrevista",
@@ -424,11 +628,9 @@ def index():
         "Aceptados",
         "Ingresos a Operación",
     ]
-    MESES_ES_CORTO = ["Ene", "Feb", "Mar", "Abr", "May", "Jun",
-                      "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
     funnel_datasets = []
     for _, row in df_funnel_ultimos_3.iterrows():
-        dt_mes = row['fecha_publicacion']
+        dt_mes    = row['fecha_publicacion']
         mes_label = f"{MESES_ES_CORTO[dt_mes.month - 1]} {dt_mes.year}"
         funnel_datasets.append({
             "label": mes_label,
@@ -440,40 +642,45 @@ def index():
                 int(row['bin_ingreso']),
             ],
         })
-    # --- COBERTURA DE CARTERA - TABLA Y GRAFICO ---
+
+    ################################ COBERTURA DE CARTERA #####################################
+
     df_act = df_plantilla_activa.copy()
     df_act['FECHA_INGRESO'] = pd.to_datetime(df_act['FECHA DE INGRESO'],dayfirst=True,errors='coerce')
     df_act = df_act.dropna(subset=['FECHA_INGRESO'])
     df_act['FECHA_BAJA'] = pd.NaT
     df_act = df_act[['CAMPAÑA', 'FECHA_INGRESO', 'FECHA_BAJA']]
+
     df_baj = df_plantilla_bajas.copy()
     df_baj['FECHA_INGRESO'] = pd.to_datetime(df_baj['FECHA DE INGRESO'],dayfirst=True,errors='coerce')
-    df_baj['FECHA_BAJA'] = pd.to_datetime(df_baj['BAJA'],dayfirst=True,errors='coerce')
+    df_baj['FECHA_BAJA']    = pd.to_datetime(df_baj['BAJA'],dayfirst=True,errors='coerce')
     df_baj = df_baj.dropna(subset=['FECHA_INGRESO'])
     df_baj = df_baj[['CAMPAÑA', 'FECHA_INGRESO', 'FECHA_BAJA']]
+
     df_personal = pd.concat([df_act, df_baj], ignore_index=True)
+
     month_map = {
         'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 'MAYO': 5, 'JUNIO': 6,
         'JULIO': 7, 'AGOSTO': 8, 'SEPTIEMBRE': 9, 'OCTUBRE': 10, 'NOVIEMBRE': 11, 'DICIEMBRE': 12
     }
     df_aut = df_plantilla_autorizada.copy()
     df_aut['MES_UPPER'] = df_aut['MES'].astype(str).str.strip().str.upper()
-    df_aut['MES_NUM'] = df_aut['MES_UPPER'].map(month_map)
-    df_aut['AÑO_NUM'] = pd.to_numeric(df_aut['AÑO'], errors='coerce')
-    df_aut['PERSONAL'] = pd.to_numeric(df_aut['PERSONAL'], errors='coerce')
+    df_aut['MES_NUM']   = df_aut['MES_UPPER'].map(month_map)
+    df_aut['AÑO_NUM']   = pd.to_numeric(df_aut['AÑO'], errors='coerce')
+    df_aut['PERSONAL']  = pd.to_numeric(df_aut['PERSONAL'], errors='coerce')
     df_aut = df_aut.dropna(subset=['MES_NUM', 'AÑO_NUM', 'PERSONAL'])
-    df_aut['MES_NUM'] = df_aut['MES_NUM'].astype(int)
-    df_aut['AÑO_NUM'] = df_aut['AÑO_NUM'].astype(int)
-    df_aut['AÑO'] = df_aut['AÑO_NUM'].astype(int)
-    df_aut['PERSONAL'] = df_aut['PERSONAL'].astype(int)
+    df_aut['MES_NUM']   = df_aut['MES_NUM'].astype(int)
+    df_aut['AÑO_NUM']   = df_aut['AÑO_NUM'].astype(int)
+    df_aut['AÑO']       = df_aut['AÑO_NUM'].astype(int)
+    df_aut['PERSONAL']  = df_aut['PERSONAL'].astype(int)
     df_aut = (df_aut.groupby(['CAMPAÑA', 'MES', 'AÑO', 'MES_NUM', 'AÑO_NUM'], as_index=False)['PERSONAL'].sum())
     df_aut['FECHA_CORTE'] = pd.to_datetime({
         'year': df_aut['AÑO_NUM'],
         'month': df_aut['MES_NUM'],
         'day': 1
     }) + pd.offsets.MonthEnd(0)
-    df_aut['_key'] = 1
-    df_personal['_key'] = 1
+    df_aut['_key']       = 1
+    df_personal['_key']  = 1
     tmp = df_aut.merge(df_personal, on=['CAMPAÑA', '_key'], how='left')
     mask = (
         (tmp['FECHA_INGRESO'] <= tmp['FECHA_CORTE']) &
@@ -491,7 +698,7 @@ def index():
     resultado = resultado.rename(columns={'PERSONAL': 'PLANTILLA AUTORIZADA'})
     resultado['PERSONAL FALTANTE'] = (
         resultado['PLANTILLA AUTORIZADA'] - resultado['TOTAL ACTIVOS']
-    )#.clip(lower=0)
+    )
     df_cobertura_de_cartera = resultado[[
         'CAMPAÑA',
         'PLANTILLA AUTORIZADA',
@@ -527,10 +734,10 @@ def index():
         .str.title() + ' ' +
         coverage_df['AÑO'].astype(int).astype(str)
     )
-    cobertura_labels = coverage_df['MES_ANO'].tolist()
-    cobertura_values = coverage_df['% COBERTURA'].tolist()
+    cobertura_labels      = coverage_df['MES_ANO'].tolist()
+    cobertura_values      = coverage_df['% COBERTURA'].tolist()
     cobertura_autorizados = coverage_df['PLANTILLA AUTORIZADA'].tolist()
-    cobertura_activos = coverage_df['TOTAL ACTIVOS'].tolist()
+    cobertura_activos     = coverage_df['TOTAL ACTIVOS'].tolist()
     df_detalle = df_cobertura_de_cartera.copy()
     df_detalle['MES_NUM'] = df_detalle['MES'].map(month_map)
     df_detalle = df_detalle.sort_values(
@@ -538,36 +745,42 @@ def index():
         ascending=[False, False, True]
     )
     cobertura_detalle_rows = df_detalle.to_dict(orient='records')
-    # INGRESOS VS BAJAS - SEMANAL
+
+    ################################ INGRESOS VS BAJAS ############################################
+
     def _to_datetime(series, dayfirst=True):
         return pd.to_datetime(series, dayfirst=dayfirst, errors="coerce")
+
     def _weekly_counts_from_dates(dates, year):
         dates = pd.to_datetime(dates, errors="coerce")
         dates = dates[dates.notna()]
         mask_year = dates.dt.year == year
-        weeks = dates[mask_year].dt.isocalendar().week
-        counts = weeks.value_counts().sort_index()
+        weeks     = dates[mask_year].dt.isocalendar().week
+        counts    = weeks.value_counts().sort_index()
         full_index = pd.Index(range(1, 54), name="Semana")
         return counts.reindex(full_index, fill_value=0)
-    ingresos_activos = _to_datetime(df_plantilla_activa["FECHA DE INGRESO"], dayfirst=True)
-    bajas_baja_dates = _to_datetime(df_plantilla_bajas["BAJA"], dayfirst=True)
-    bajas_ingreso_dates = _to_datetime(df_plantilla_bajas["FECHA DE INGRESO"], dayfirst=True)
-    mask_bajas_validas = bajas_ingreso_dates.notna()
+
+    ingresos_activos       = _to_datetime(df_plantilla_activa["FECHA DE INGRESO"], dayfirst=True)
+    bajas_baja_dates       = _to_datetime(df_plantilla_bajas["BAJA"], dayfirst=True)
+    bajas_ingreso_dates    = _to_datetime(df_plantilla_bajas["FECHA DE INGRESO"], dayfirst=True)
+    mask_bajas_validas     = bajas_ingreso_dates.notna()
     bajas_baja_dates_validas = bajas_baja_dates[mask_bajas_validas]
-    ingresos_todos = pd.concat([ingresos_activos, bajas_ingreso_dates], ignore_index=True)
-    YEAR = pd.Timestamp.today().year 
+    ingresos_todos         = pd.concat([ingresos_activos, bajas_ingreso_dates], ignore_index=True)
+
+    YEAR = pd.Timestamp.today().year
+
     def _years_in_series(d):
         d = pd.to_datetime(d, errors="coerce")
         return d.dt.year.dropna().astype(int).unique()
-    years_candidates = sorted(set(_years_in_series(ingresos_todos)).union(set(_years_in_series(bajas_baja_dates_validas))), reverse=True)
+
+    years_candidates     = sorted(set(_years_in_series(ingresos_todos)).union(set(_years_in_series(bajas_baja_dates_validas))), reverse=True)
     ingresos_year_counts = _weekly_counts_from_dates(ingresos_todos, YEAR)
-    bajas_year_counts = _weekly_counts_from_dates(bajas_baja_dates_validas, YEAR)
-    fallback_used = False
+    bajas_year_counts    = _weekly_counts_from_dates(bajas_baja_dates_validas, YEAR)
     if (ingresos_year_counts.sum() + bajas_year_counts.sum()) == 0 and len(years_candidates) > 0 and YEAR not in years_candidates:
         YEAR = years_candidates[0]
         ingresos_year_counts = _weekly_counts_from_dates(ingresos_todos, YEAR)
-        bajas_year_counts = _weekly_counts_from_dates(bajas_baja_dates_validas, YEAR)
-        fallback_used = True
+        bajas_year_counts    = _weekly_counts_from_dates(bajas_baja_dates_validas, YEAR)
+
     weeks = pd.Index(range(1, 54), name="Semana")
     df_semana = pd.DataFrame({
         "Semana": weeks,
@@ -581,7 +794,7 @@ def index():
             week_month_nums.append(int(d.month))
         except Exception:
             week_month_nums.append(None)
-    # --- INGRESOS VS BAJAS - MENSUAL (para el filtro Semanal/Mensual) ---
+
     def _monthly_counts_from_dates(dates, year):
         dates = pd.to_datetime(dates, errors="coerce")
         dates = dates[dates.notna()]
@@ -589,66 +802,77 @@ def index():
         counts = dates.dt.month.value_counts().sort_index()
         full_index = pd.Index(range(1, 13), name="Mes")
         return counts.reindex(full_index, fill_value=0)
+
     ingresos_month_counts = _monthly_counts_from_dates(ingresos_todos, YEAR)
-    bajas_month_counts = _monthly_counts_from_dates(bajas_baja_dates_validas, YEAR)
-    meses_numeros = list(range(1, 13))
-    meses_labels_corto = MESES_ES_CORTO[:12]
-    ingresos_mes = [int(ingresos_month_counts.get(m, 0)) for m in meses_numeros]
-    bajas_mes = [int(bajas_month_counts.get(m, 0)) for m in meses_numeros]
-    # INGRESOS VS BAJAS - ACUMULADO
+    bajas_month_counts    = _monthly_counts_from_dates(bajas_baja_dates_validas, YEAR)
+    meses_numeros         = list(range(1, 13))
+    meses_labels_corto    = MESES_ES_CORTO[:12]
+    ingresos_mes          = [int(ingresos_month_counts.get(m, 0)) for m in meses_numeros]
+    bajas_mes             = [int(bajas_month_counts.get(m, 0)) for m in meses_numeros]
+
     df_semana_cum = df_semana.copy()
     df_semana_cum["Ingresos acumulados"] = df_semana_cum["Ingresos"].cumsum()
-    df_semana_cum["Bajas acumuladas"] = df_semana_cum["Bajas"].cumsum()
-    # LEADs
-    data_reclutamiento["fecha_publicacion"].replace("", pd.NA, inplace=True)
-    data_reclutamiento["fecha_publicacion"] = pd.to_datetime(
-        data_reclutamiento["fecha_publicacion"], errors="coerce"
-    )
-    data_reclutamiento["entrevista"] = pd.to_datetime(
-        data_reclutamiento["entrevista"], errors="coerce"
-    )
-    mask = data_reclutamiento["fecha_publicacion"].isna()
-    data_reclutamiento.loc[mask, "fecha_publicacion"] = data_reclutamiento.loc[mask, "entrevista"]
-    data_reclutamiento["fecha_publicacion"] = pd.to_datetime(
-        data_reclutamiento["fecha_publicacion"], errors="coerce"
-    )
-    data_reclutamiento["mes"] = data_reclutamiento["fecha_publicacion"].dt.to_period("M").dt.to_timestamp()
-    df_mes = (
-        data_reclutamiento
-        .groupby(["reclutador", "mes"])
-        .size()
-        .reset_index(name="n_leads")
-    )
-    df_total = (
-        df_mes
-        .groupby("mes", as_index=False)["n_leads"]
-        .sum()
-    )
-    df_total["reclutador"] = "TOTAL"
-    df_leads_all = pd.concat([df_mes, df_total], ignore_index=True)
-    df_leads_all = df_leads_all.dropna(subset=["mes"])
-    df_leads_all["mes"] = pd.to_datetime(df_leads_all["mes"], errors="coerce")
-    meses_leads = sorted(df_leads_all["mes"].dropna().unique())
-    etiquetas_leads = [pd.to_datetime(m).strftime("%Y-%m-%d") for m in meses_leads]
-    reclutadores = sorted(df_leads_all["reclutador"].dropna().unique())
-    leads_por_reclutador = {}
-    for rec in reclutadores:
-        if rec == "TOTAL":
-            continue
-        serie = (
-            df_leads_all[df_leads_all["reclutador"] == rec]
+    df_semana_cum["Bajas acumuladas"]    = df_semana_cum["Bajas"].cumsum()
+
+    ################################ LEADS POR RECLUTADOR ########################################
+
+    if not data_reclutamiento.empty and "fecha_publicacion" in data_reclutamiento.columns:
+        data_reclutamiento["fecha_publicacion"].replace("", pd.NA, inplace=True)
+        data_reclutamiento["fecha_publicacion"] = pd.to_datetime(
+            data_reclutamiento["fecha_publicacion"], errors="coerce"
+        )
+        if "entrevista" in data_reclutamiento.columns:
+            data_reclutamiento["entrevista"] = pd.to_datetime(
+                data_reclutamiento["entrevista"], errors="coerce"
+            )
+            mask = data_reclutamiento["fecha_publicacion"].isna()
+            data_reclutamiento.loc[mask, "fecha_publicacion"] = data_reclutamiento.loc[mask, "entrevista"]
+
+        data_reclutamiento["fecha_publicacion"] = pd.to_datetime(
+            data_reclutamiento["fecha_publicacion"], errors="coerce"
+        )
+        data_reclutamiento["mes"] = data_reclutamiento["fecha_publicacion"].dt.to_period("M").dt.to_timestamp()
+        df_mes = (
+            data_reclutamiento
+            .groupby(["reclutador", "mes"])
+            .size()
+            .reset_index(name="n_leads")
+        )
+        df_total = (
+            df_mes
+            .groupby("mes", as_index=False)["n_leads"]
+            .sum()
+        )
+        df_total["reclutador"] = "TOTAL"
+        df_leads_all = pd.concat([df_mes, df_total], ignore_index=True)
+        df_leads_all = df_leads_all.dropna(subset=["mes"])
+        df_leads_all["mes"] = pd.to_datetime(df_leads_all["mes"], errors="coerce")
+        meses_leads     = sorted(df_leads_all["mes"].dropna().unique())
+        etiquetas_leads = [pd.to_datetime(m).strftime("%Y-%m-%d") for m in meses_leads]
+        reclutadores    = sorted(df_leads_all["reclutador"].dropna().unique())
+        leads_por_reclutador = {}
+        for rec in reclutadores:
+            if rec == "TOTAL":
+                continue
+            serie = (
+                df_leads_all[df_leads_all["reclutador"] == rec]
+                .set_index("mes")["n_leads"]
+            )
+            leads_por_reclutador[rec] = [int(serie.get(m, 0)) for m in meses_leads]
+        serie_total = (
+            df_leads_all[df_leads_all["reclutador"] == "TOTAL"]
             .set_index("mes")["n_leads"]
         )
-        leads_por_reclutador[rec] = [int(serie.get(m, 0)) for m in meses_leads]
-    serie_total = (
-        df_leads_all[df_leads_all["reclutador"] == "TOTAL"]
-        .set_index("mes")["n_leads"]
-    )
-    leads_total = [int(serie_total.get(m, 0)) for m in meses_leads]
-    # CANALES DE INGRESO - PLANTILLA Y PAUTA
+        leads_total = [int(serie_total.get(m, 0)) for m in meses_leads]
+    else:
+        etiquetas_leads      = []
+        leads_por_reclutador = {}
+        leads_total          = []
+
+    ################################ CANALES INGRESO / PAUTA #####################################
+
     # PLANTILLA
     df = df_plantilla_activa.copy()
-
     df['FECHA DE INGRESO'] = pd.to_datetime(
         df['FECHA DE INGRESO'],
         dayfirst=True,
@@ -666,7 +890,7 @@ def index():
         .size()
         .reset_index(name='CANTIDAD')
     )
-    canales_plantilla_por_mes = {}
+    canales_plantilla_por_mes      = {}
     canales_plantilla_meses_labels = []
     if not df_grouped.empty:
         df_grouped = df_grouped.dropna(subset=['anio_mes', 'FUENTE'])
@@ -678,78 +902,104 @@ def index():
             canales_plantilla_por_mes[m] = dict(
                 zip(df_m['FUENTE'], df_m['CANTIDAD'])
             )
+
     # PAUTA
-    data_reclutamiento["fecha_publicacion"] = pd.to_datetime(
-        data_reclutamiento["fecha_publicacion"],
-        errors="coerce"
-    )
-    data_reclutamiento["anio_mes"] = data_reclutamiento["fecha_publicacion"].dt.strftime("%Y-%m")
-    mask_referido = data_reclutamiento["folio"] == "Referido"
-    df_ref = data_reclutamiento[mask_referido].copy()
-    agg_ref = (
-        df_ref
-        .groupby(["canal", "anio_mes"])
-        .size()
-        .reset_index(name="folios_unicos")
-    )
-    df_no_ref = data_reclutamiento[~mask_referido].copy()
-    df_no_ref = df_no_ref.drop_duplicates(subset=["canal", "folio", "anio_mes"])
-    agg_no_ref = (
-        df_no_ref
-        .groupby(["canal", "anio_mes"])["folio"]
-        .nunique()
-        .reset_index(name="folios_unicos")
-    )
-    resumen = pd.concat([agg_ref, agg_no_ref], ignore_index=True)
-    resumen = (
-        resumen
-        .groupby(["canal", "anio_mes"])["folios_unicos"]
-        .sum()
-        .reset_index()
-    )
-    canales_pauta_por_mes = {}
-    canales_pauta_meses_labels = []
-    if not resumen.empty:
-        resumen = resumen.dropna(subset=["anio_mes", "canal"])
-        resumen["anio_mes"] = resumen["anio_mes"].astype(str)
-        meses_unicos_pauta = sorted(resumen["anio_mes"].unique())
-        canales_pauta_meses_labels = list(meses_unicos_pauta)
-        for m in meses_unicos_pauta:
-            df_m = resumen[resumen["anio_mes"] == m]
-            canales_pauta_por_mes[m] = dict(
-                zip(df_m["canal"], df_m["folios_unicos"])
+    if not data_reclutamiento.empty and "fecha_publicacion" in data_reclutamiento.columns:
+        data_reclutamiento["fecha_publicacion"] = pd.to_datetime(
+            data_reclutamiento["fecha_publicacion"],
+            errors="coerce"
+        )
+        data_reclutamiento["anio_mes"] = data_reclutamiento["fecha_publicacion"].dt.strftime("%Y-%m")
+        if "folio" in data_reclutamiento.columns:
+            mask_referido = data_reclutamiento["folio"] == "Referido"
+        else:
+            mask_referido = pd.Series(False, index=data_reclutamiento.index)
+
+        df_ref = data_reclutamiento[mask_referido].copy()
+        agg_ref = (
+            df_ref
+            .groupby(["canal", "anio_mes"])
+            .size()
+            .reset_index(name="folios_unicos")
+        )
+        df_no_ref = data_reclutamiento[~mask_referido].copy()
+        if {"canal", "folio", "anio_mes"}.issubset(df_no_ref.columns):
+            df_no_ref = df_no_ref.drop_duplicates(subset=["canal", "folio", "anio_mes"])
+            agg_no_ref = (
+                df_no_ref
+                .groupby(["canal", "anio_mes"])["folio"]
+                .nunique()
+                .reset_index(name="folios_unicos")
             )
-    # INVERSION EN PAUTA - SEMANAL Y MENSUAL
-    data_reclutamiento["monto_pagado"] = pd.to_numeric(
-        data_reclutamiento["monto_pagado"],
-        errors="coerce"
-    )
-    df_pagos = data_reclutamiento.dropna(subset=["monto_pagado", "fecha_publicacion"]).copy()
-    df_pagos["fecha_publicacion"] = pd.to_datetime(df_pagos["fecha_publicacion"], errors="coerce")
-    df_pagos = df_pagos.sort_values("fecha_publicacion")
-    df_pagos_unicos = df_pagos.drop_duplicates(subset=["folio"], keep="first")
-    df_pagos_unicos["fecha_semana"] = (
-        df_pagos_unicos["fecha_publicacion"]
-        - pd.to_timedelta(df_pagos_unicos["fecha_publicacion"].dt.weekday, unit="D")
-    )
-    pagos_semanales = (
-        df_pagos_unicos
-        .groupby("fecha_semana")["monto_pagado"]
-        .sum()
-        .reset_index(name="monto_total_pagado")
-    )
-    df_pagos_unicos["anio_mes_pago"] = df_pagos_unicos["fecha_publicacion"].dt.to_period("M").astype(str)
-    pagos_mensuales = (
-        df_pagos_unicos
-        .groupby("anio_mes_pago")["monto_pagado"]
-        .sum()
-        .reset_index(name="monto_total_pagado")
-    )
-    pagos_semanales_labels = pagos_semanales["fecha_semana"].dt.strftime("%Y-%m-%d").tolist()
-    pagos_semanales_values = pagos_semanales["monto_total_pagado"].round(2).tolist()
-    pagos_mensuales_labels = pagos_mensuales["anio_mes_pago"].astype(str).tolist()
-    pagos_mensuales_values = pagos_mensuales["monto_total_pagado"].round(2).tolist()
-    # MOTIVOS DE BAJAS
+            resumen = pd.concat([agg_ref, agg_no_ref], ignore_index=True)
+        else:
+            resumen = agg_ref.copy()
+
+        resumen = (
+            resumen
+            .groupby(["canal", "anio_mes"])["folios_unicos"]
+            .sum()
+            .reset_index()
+        )
+        canales_pauta_por_mes      = {}
+        canales_pauta_meses_labels = []
+        if not resumen.empty:
+            resumen["anio_mes"] = resumen["anio_mes"].astype(str)
+            resumen = resumen.dropna(subset=["anio_mes", "canal"])
+            meses_unicos_pauta = sorted(resumen["anio_mes"].unique())
+            canales_pauta_meses_labels = list(meses_unicos_pauta)
+            for m in meses_unicos_pauta:
+                df_m = resumen[resumen["anio_mes"] == m]
+                canales_pauta_por_mes[m] = dict(
+                    zip(df_m["canal"], df_m["folios_unicos"])
+                )
+    else:
+        canales_pauta_por_mes      = {}
+        canales_pauta_meses_labels = []
+
+    ################################ INVERSION EN PAUTA ##########################################
+
+    if not data_reclutamiento.empty and "monto_pagado" in data_reclutamiento.columns and "fecha_publicacion" in data_reclutamiento.columns:
+        data_reclutamiento["monto_pagado"] = pd.to_numeric(
+            data_reclutamiento["monto_pagado"],
+            errors="coerce"
+        )
+        df_pagos = data_reclutamiento.dropna(subset=["monto_pagado", "fecha_publicacion"]).copy()
+        df_pagos["fecha_publicacion"] = pd.to_datetime(df_pagos["fecha_publicacion"], errors="coerce")
+        df_pagos = df_pagos.sort_values("fecha_publicacion")
+        if "folio" in df_pagos.columns:
+            df_pagos_unicos = df_pagos.drop_duplicates(subset=["folio"], keep="first")
+        else:
+            df_pagos_unicos = df_pagos.copy()
+        df_pagos_unicos["fecha_semana"] = (
+            df_pagos_unicos["fecha_publicacion"]
+            - pd.to_timedelta(df_pagos_unicos["fecha_publicacion"].dt.weekday, unit="D")
+        )
+        pagos_semanales = (
+            df_pagos_unicos
+            .groupby("fecha_semana")["monto_pagado"]
+            .sum()
+            .reset_index(name="monto_total_pagado")
+        )
+        df_pagos_unicos["anio_mes_pago"] = df_pagos_unicos["fecha_publicacion"].dt.to_period("M").astype(str)
+        pagos_mensuales = (
+            df_pagos_unicos
+            .groupby("anio_mes_pago")["monto_pagado"]
+            .sum()
+            .reset_index(name="monto_total_pagado")
+        )
+        pagos_semanales_labels = pagos_semanales["fecha_semana"].dt.strftime("%Y-%m-%d").tolist()
+        pagos_semanales_values = pagos_semanales["monto_total_pagado"].round(2).tolist()
+        pagos_mensuales_labels = pagos_mensuales["anio_mes_pago"].astype(str).tolist()
+        pagos_mensuales_values = pagos_mensuales["monto_total_pagado"].round(2).tolist()
+    else:
+        pagos_semanales_labels = []
+        pagos_semanales_values = []
+        pagos_mensuales_labels = []
+        pagos_mensuales_values = []
+
+    ################################ MOTIVOS DE BAJA #############################################
+
     df = df_plantilla_bajas.copy()
     df["BAJA"] = pd.to_datetime(df["BAJA"], dayfirst=True, errors="coerce")
     mask_year = df["BAJA"].dt.year == YEAR
@@ -778,7 +1028,8 @@ def index():
     if otros_conteo > 0:
         motivos_baja_labels.append("Otros")
         motivos_baja_values.append(int(otros_conteo))
-    # TABLA DE MOTIVOS DE BAJA POR MES
+
+    # TABLA motivos baja por mes
     df = df_plantilla_bajas.copy()
     df["BAJA"] = pd.to_datetime(df["BAJA"], dayfirst=True, errors="coerce")
     df_year = df.loc[df["BAJA"].dt.year == YEAR].copy()
@@ -798,23 +1049,21 @@ def index():
         margins=True,
         margins_name="Total"
     )
-
-    meses_es = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
-                "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
     pivot = pivot.reindex(columns=meses_es + ["Total"]).fillna(0).astype(int)
 
     if "Total" in pivot.index:
         total_row = pivot.loc[["Total"]]
-        cuerpo = pivot.drop(index="Total")
-        cuerpo = cuerpo.sort_values(by="Total", ascending=False)
+        cuerpo    = pivot.drop(index="Total")
+        cuerpo    = cuerpo.sort_values(by="Total", ascending=False)
         pivot_sorted = pd.concat([cuerpo, total_row])
     else:
         pivot_sorted = pivot.sort_values(by="Total", ascending=False)
 
     tabla = pivot_sorted.reset_index().rename(columns={"index": "MOTIVO"})
-    tabla_motivos_baja_rows = tabla.to_dict(orient="records")
+    tabla_motivos_baja_rows    = tabla.to_dict(orient="records")
     tabla_motivos_baja_columns = [col for col in tabla.columns if col != "MOTIVO"]
-    # ANTIGUEDAD PROMEDIO DE BAJAS
+
+    # Antigüedad promedio de bajas
     df = df_plantilla_bajas.copy()
     for col in ["FECHA DE INGRESO", "BAJA"]:
         df[col] = pd.to_datetime(df[col], dayfirst=True, errors="coerce")
@@ -858,15 +1107,12 @@ def index():
 
     return render_template(
         "dashboard-de-capital-humano.html",
-        # --- KPIS ---
-        # Plantilla autorizada
+        # KPIs
         plantilla_autorizada_total=sum_plantilla_general_autorizada,
         plantilla_autorizada_operativa=sum_plantilla_operativa_autorizada,
         plantilla_autorizada_administrativa=sum_plantilla_administrativa_autorizada,
-        # Género
         genero_cantidad=genero_cantidad_dict,
         genero_porcentaje=genero_porcentaje_dict,
-        # Nómina
         nomina_total_general=total_general_nomina,
         nomina_total_general_fmt=total_general_nomina_fmt,
         nomina_estructura=nomina_estructura,
@@ -875,21 +1121,20 @@ def index():
         nomina_operacion_fmt=nomina_operacion_fmt,
         nomina_por_area=nomina_por_area_dict,
         nomina_por_area_fmt=nomina_por_area_fmt_dict,
-        # Contratos
         contratos_total=contratos_total,
         contratos_estructura=contratos_estructura,
         contratos_operacion=contratos_operacion,
         contratos_por_area=contratos_por_area_dict,
-        # FUNELES ÚLTIMOS 3 MESES
+        # Funnel últimos 3 meses
         funnel_labels=funnel_labels,
         funnel_datasets=funnel_datasets,
-        # COBERTURA DE CARTERA
+        # Cobertura cartera
         cobertura_labels=cobertura_labels,
         cobertura_values=cobertura_values,
         cobertura_autorizados=cobertura_autorizados,
         cobertura_activos=cobertura_activos,
         cobertura_detalle_rows=cobertura_detalle_rows,
-        # INGRESOS VS BAJAS - SEMANAL / MENSUAL
+        # Ingresos vs bajas semanal / mensual
         ingresos_bajas_year=int(YEAR),
         ingresos_bajas_week_labels=df_semana["Semana"].astype(int).tolist(),
         ingresos_bajas_week_ingresos=df_semana["Ingresos"].astype(int).tolist(),
@@ -898,35 +1143,34 @@ def index():
         ingresos_bajas_month_labels=meses_labels_corto,
         ingresos_bajas_month_ingresos=ingresos_mes,
         ingresos_bajas_month_bajas=bajas_mes,
-        # INGRESOS VS BAJAS - ACUMULADO
+        # Ingresos vs bajas acumulado
         ingresos_bajas_cum_week_labels=df_semana_cum["Semana"].astype(int).tolist(),
         ingresos_bajas_cum_ingresos=df_semana_cum["Ingresos acumulados"].astype(int).tolist(),
         ingresos_bajas_cum_bajas=df_semana_cum["Bajas acumuladas"].astype(int).tolist(),
-        # LEADs POR RECLUTADOR
+        # Leads por reclutador
         leads_labels=etiquetas_leads,
         leads_por_reclutador=leads_por_reclutador,
         leads_total=leads_total,
-        # CANALES DE INGRESO
+        # Canales de ingreso
         canales_plantilla_por_mes=canales_plantilla_por_mes,
         canales_plantilla_meses_labels=canales_plantilla_meses_labels,
         canales_pauta_por_mes=canales_pauta_por_mes,
         canales_pauta_meses_labels=canales_pauta_meses_labels,
-        # LÍNEA DEL TIEMPO DE PAGOS
+        # Inversión pauta
         pagos_semanales_labels=pagos_semanales_labels,
         pagos_semanales_values=pagos_semanales_values,
         pagos_mensuales_labels=pagos_mensuales_labels,
         pagos_mensuales_values=pagos_mensuales_values,
-        # MOTIVOS DE BAJAS - PIE CHART
+        # Motivos de bajas
         motivos_baja_labels=motivos_baja_labels,
         motivos_baja_values=motivos_baja_values,
-        # DETALLE MOTIVOS DE BAJA POR MES
         tabla_motivos_baja_rows=tabla_motivos_baja_rows,
         tabla_motivos_baja_columns=tabla_motivos_baja_columns,
-        # ANTIGÜEDAD PROMEDIO DE BAJAS
+        # Antigüedad promedio de bajas
         antiguedad_bajas_year=int(YEAR),
         antiguedad_bajas_labels=antiguedad_bajas_labels,
         antiguedad_bajas_values=antiguedad_bajas_values,
-        # >>> NUEVO: filtro de campaña
+        # Filtro campaña
         campanias=campanias,
         campania_seleccionada=campania_seleccionada,
     )
@@ -944,4 +1188,4 @@ def handle_exception(e):
 ######################################### EJECUTADOR #############################################
 
 if __name__ == "__main__":
-    app.run(debug = False, host = "0.0.0.0", port = 5000)
+    app.run(debug=True, host="0.0.0.0", port=5000)
