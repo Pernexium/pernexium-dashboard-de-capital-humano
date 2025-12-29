@@ -11,6 +11,7 @@ import numpy as np
 import unicodedata
 import pandas as pd
 import datetime as dt
+import calendar
 from io import BytesIO
 from markupsafe import Markup 
 from dotenv import load_dotenv
@@ -28,14 +29,13 @@ from flask import Flask, render_template, request
 load_dotenv()
 
 S3_SA_KEY      = os.getenv("S3_SA_KEY")
-SHEET_ID       = os.getenv("SHEET_ID")      # Plantillas / bajas
-SHEET_ID_2     = os.getenv("SHEET_ID_2")    # Reclutamiento (Hoja 1)
+SHEET_ID       = os.getenv("SHEET_ID")     
+SHEET_ID_2     = os.getenv("SHEET_ID_2")   
 SCOPES         = json.loads(os.getenv("SCOPES")) if os.getenv("SCOPES") else []
 S3_BUCKET      = os.getenv("S3_BUCKET")
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
 AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
 
-# Cliente S3 para service account de Sheets “general”
 s3 = boto3.client(
     "s3",
     aws_access_key_id=AWS_ACCESS_KEY,
@@ -55,7 +55,6 @@ def build_sheets_service():
     return build("sheets", "v4", credentials=creds, cache_discovery=False)
 
 def fetch_sheet_data(service, sheet_name):
-    # IMPORTANTE: nombre de hoja entre comillas simples
     safe_sheet = sheet_name.replace("'", "''")
     rng  = f"'{safe_sheet}'!A1:ZZ"
 
@@ -97,13 +96,11 @@ def normalizar_mes(valor):
     else:
         s = str(valor).strip().lower()
 
-        # Si ya viene como "oct-25" lo dejamos
         try:
             return s
         except Exception:
             pass
 
-        # Corrige tipos "03/11/20225"
         s_fix = s
         parts = s.split("/")
         if len(parts) == 3 and len(parts[2]) > 4:
@@ -134,10 +131,6 @@ def limpiar_nombre(nombre: str) -> str:
     return nombre
 
 def get_data_sheets():
-    """
-    Datos de reclutamiento desde GOOGLE SHEETS (SHEET_ID_2, Hoja 1)
-    usando OAuth y tokens guardados en S3.
-    """
     if not SHEET_ID_2:
         raise RuntimeError("SHEET_ID_2 no está definido en las variables de entorno.")
 
@@ -152,7 +145,6 @@ def get_data_sheets():
     SCOPES_READ  = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
     SCOPES_WRITE = ["https://www.googleapis.com/auth/spreadsheets"]
 
-    # Cliente S3 para los tokens
     s3_tokens = boto3.client(
         "s3",
         aws_access_key_id=AWS_ACCESS_KEY,
@@ -239,16 +231,12 @@ def index():
     campania_seleccionada = campania_param or None
 
     service = build_sheets_service()
-
-    # Reclutamiento viene de SHEET_ID_2 (Hoja 1)
     df_reclutamiento_full = get_data_sheets()
 
-    # Plantillas / bajas vienen de SHEET_ID
     df_plantilla_activa_full     = fetch_sheet_data(service, "PLANTILLA AJUSTE")
     df_plantilla_autorizada_full = fetch_sheet_data(service, "PLANTILLA AUTORIZADA")
     df_plantilla_bajas_full      = fetch_sheet_data(service, "PLANTILLA BAJAS")
 
-    # Catálogo de campañas (reclutamiento + plantilla)
     campanias_reclut = set(
         df_reclutamiento_full.get("Campaña", pd.Series(dtype=str))
         .dropna()
@@ -264,7 +252,6 @@ def index():
     )
     campanias = sorted(campanias_reclut.union(campanias_sheets))
 
-    # Copias filtradas
     df_reclutamiento        = df_reclutamiento_full.copy()
     df_plantilla_activa     = df_plantilla_activa_full.copy()
     df_plantilla_autorizada = df_plantilla_autorizada_full.copy()
@@ -419,15 +406,10 @@ def index():
     data_reclutamiento = data_reclutamiento.dropna(axis=0, how='all')
 
     if not data_reclutamiento.empty and data_reclutamiento.shape[0] > 3:
-        # Encabezado = segunda fila
         data_reclutamiento.columns = data_reclutamiento.iloc[1, :]
         data_reclutamiento = data_reclutamiento[2:]
-
-        # eliminar fila de ejemplo
         data_reclutamiento = data_reclutamiento.reset_index(drop=True)
         data_reclutamiento = data_reclutamiento[1:]
-
-        # Normalizar nombres de columnas
         data_reclutamiento.columns = [
             col.strip()
                .replace(" ", "_")
@@ -810,6 +792,23 @@ def index():
     ingresos_mes          = [int(ingresos_month_counts.get(m, 0)) for m in meses_numeros]
     bajas_mes             = [int(bajas_month_counts.get(m, 0)) for m in meses_numeros]
 
+    def _daily_counts_from_dates(dates, year, month):
+        dates = pd.to_datetime(dates, errors="coerce")
+        dates = dates[dates.notna()]
+        dates = dates[(dates.dt.year == year) & (dates.dt.month == month)]
+        days_in_month = calendar.monthrange(int(year), int(month))[1]
+        idx = pd.Index(range(1, days_in_month + 1), name="Dia")
+        counts = dates.dt.day.value_counts().sort_index().reindex(idx, fill_value=0).astype(int)
+        labels = [f"{d:02d}" for d in idx.tolist()]
+        return labels, counts.tolist()
+
+    ingresos_bajas_daily = {}
+    for m in range(1, 13):
+        dlabels, dingresos = _daily_counts_from_dates(ingresos_todos, YEAR, m)
+        _, dbajas = _daily_counts_from_dates(bajas_baja_dates_validas, YEAR, m)
+        ingresos_bajas_daily[str(m)] = {"labels": dlabels, "ingresos": dingresos, "bajas": dbajas}
+
+
     df_semana_cum = df_semana.copy()
     df_semana_cum["Ingresos acumulados"] = df_semana_cum["Ingresos"].cumsum()
     df_semana_cum["Bajas acumuladas"]    = df_semana_cum["Bajas"].cumsum()
@@ -1143,6 +1142,7 @@ def index():
         ingresos_bajas_month_labels=meses_labels_corto,
         ingresos_bajas_month_ingresos=ingresos_mes,
         ingresos_bajas_month_bajas=bajas_mes,
+        ingresos_bajas_daily=ingresos_bajas_daily,
         # Ingresos vs bajas acumulado
         ingresos_bajas_cum_week_labels=df_semana_cum["Semana"].astype(int).tolist(),
         ingresos_bajas_cum_ingresos=df_semana_cum["Ingresos acumulados"].astype(int).tolist(),
