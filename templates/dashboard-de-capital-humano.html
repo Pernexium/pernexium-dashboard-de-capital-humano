@@ -209,9 +209,9 @@
 
         <!-- >>> NUEVO: Filtro universal de campaña -->
       <form method="GET" class="flex items-center">
-        <label for="campania-select" class="sr-only">TODAS</label>
+        <label for="campania-select" class="sr-only">Campaña</label>
 
-        <div class="relative inline-block w-28">
+        <div class="relative inline-block w-auto min-w-[90px]">
           <!-- SELECT funcional (invisible pero clickeable) -->
           <select
             id="campania-select"
@@ -219,7 +219,7 @@
             class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             onchange="this.form.submit()"
           >
-            <option value="">TODAS</option>
+            <option value="">Campaña</option>
             {% for c in campanias %}
               <option value="{{ c }}" {% if campania_seleccionada == c %}selected{% endif %}>
                 {{ c }}
@@ -244,7 +244,7 @@
               {% if campania_seleccionada %}
                 {{ campania_seleccionada.split(' ')|first }}
               {% else %}
-                TODAS
+                Campaña
               {% endif %}
             </span>
 
@@ -556,7 +556,23 @@
             </h2>
           </div>
           <div class="flex items-center gap-2">
-            <div class="inline-flex rounded-full border border-slate-200 bg-slate-100 text-xs p-0.5">
+            
+<div class="relative">
+  <select
+    id="ib-month-select"
+    class="appearance-none bg-slate-100 border border-slate-200 text-slate-700 text-xs font-medium rounded-full pl-3 pr-8 py-2
+           focus:outline-none focus:ring-2 focus:ring-[#0c376c]/20"
+    title="Selecciona un mes para ver el detalle por día"
+  >
+    <option value="">Mes (por día)</option>
+    {% for mes in ingresos_bajas_month_labels %}
+      <option value="{{ loop.index }}">{{ mes }} {{ ingresos_bajas_year }}</option>
+    {% endfor %}
+  </select>
+  <i class="fas fa-chevron-down pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-500"></i>
+</div>
+
+<div class="inline-flex rounded-full border border-slate-200 bg-slate-100 text-xs p-0.5">
               <button
                 id="ib-toggle-semanal"
                 type="button"
@@ -589,7 +605,7 @@
           <div class="flex items-center justify-between gap-3 mb-4">
             <div class="space-y-1">
               <h2 class="text-lg md:text-xl font-semibold text-slate-900">
-                Ingresos vs Bajas
+                Histórico - Ingresos vs Bajas
               </h2>
               <p class="text-xs text-slate-500">
                 Acumulado Semanal {{ ingresos_bajas_year }}
@@ -614,6 +630,22 @@
               <p class="text-xs text-slate-500">
                 Distribución mensual de LEADs por Reclutador
               </p>
+            </div>
+            <div class="inline-flex rounded-full border border-slate-200 bg-slate-100 text-xs p-0.5">
+              <button
+                id="leads-toggle-stack"
+                type="button"
+                class="px-3 py-1.5 rounded-full font-medium bg-[#0c376c] text-white shadow-sm"
+              >
+                Stack
+              </button>
+              <button
+                id="leads-toggle-line"
+                type="button"
+                class="px-3 py-1.5 rounded-full font-medium text-slate-700 bg-slate-100"
+              >
+                Línea
+              </button>
             </div>
           </div>
           <div class="h-56 md:h-64 lg:h-64">
@@ -1045,19 +1077,26 @@
           'enero','febrero','marzo','abril','mayo','junio',
           'julio','agosto','septiembre','octubre','noviembre','diciembre'
         ];
+
         const labelStr = String(rawLabel).trim();
-        const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(labelStr);
-        if (isoMatch) {
-          const year = parseInt(isoMatch[1], 10);
-          const monthIdx = parseInt(isoMatch[2], 10) - 1;
-          if (monthIdx >= 0 && monthIdx < 12) {
-            return meses[monthIdx] + ' ' + year;
-          }
+
+        // YYYY-MM-DD...
+        let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(labelStr);
+        if (m) {
+          const year = parseInt(m[1], 10);
+          const monthIdx = parseInt(m[2], 10) - 1;
+          if (monthIdx >= 0 && monthIdx < 12) return `${meses[monthIdx]} ${year}`;
         }
-        const d = new Date(labelStr);
-        if (!isNaN(d.getTime())) {
-          return meses[d.getMonth()] + ' ' + d.getFullYear();
+
+        // YYYY-MM
+        m = /^(\d{4})-(\d{2})$/.exec(labelStr);
+        if (m) {
+          const year = parseInt(m[1], 10);
+          const monthIdx = parseInt(m[2], 10) - 1;
+          if (monthIdx >= 0 && monthIdx < 12) return `${meses[monthIdx]} ${year}`;
         }
+
+        // Abreviados "Ene 2025"
         const mapAbrev = {
           'Ene':'enero','Feb':'febrero','Mar':'marzo','Abr':'abril',
           'May':'mayo','Jun':'junio','Jul':'julio','Ago':'agosto',
@@ -1067,8 +1106,11 @@
         if (parts.length === 2 && mapAbrev[parts[0]]) {
           return mapAbrev[parts[0]] + ' ' + parts[1];
         }
+
+        // Fallback (evitar Date() para meses por zona horaria)
         return labelStr;
       }
+
       function capitalizeFirst(label) {
         if (!label) return '';
         return label.charAt(0).toUpperCase() + label.slice(1);
@@ -1090,8 +1132,74 @@
 
       if (container && funnelDatasetsRaw && funnelDatasetsRaw.length) {
         const allDatasets = funnelDatasetsRaw || [];
-        const displayDatasets = allDatasets.slice(-3);
+
+        // ---- helpers para forzar últimos 3 meses ----
+        function parseYearMonth(label) {
+          if (!label) return null;
+          const s = String(label).trim();
+
+          // YYYY-MM-DD...
+          let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+          if (m) return { year: +m[1], month: +m[2] };
+
+          // YYYY-MM
+          m = /^(\d{4})-(\d{2})$/.exec(s);
+          if (m) return { year: +m[1], month: +m[2] };
+
+          // "Ene 2025"
+          m = /^([A-Za-zÁÉÍÓÚáéíóúÑñ]{3})\s+(\d{4})$/.exec(s);
+          if (m) {
+            const map = { Ene:1, Feb:2, Mar:3, Abr:4, May:5, Jun:6, Jul:7, Ago:8, Sep:9, Oct:10, Nov:11, Dic:12 };
+            const mon = map[m[1]] || map[m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase()];
+            if (mon) return { year: +m[2], month: mon };
+          }
+
+          return null;
+        }
+
+        function ymKey(ym) {
+          return `${ym.year}-${String(ym.month).padStart(2, '0')}`;
+        }
+
+        function lastMonthKeys(count, refDate = new Date()) {
+          const keys = [];
+          const d = new Date(refDate.getFullYear(), refDate.getMonth(), 1); // inicio de mes local
+          for (let i = count - 1; i >= 0; i--) {
+            const x = new Date(d.getFullYear(), d.getMonth() - i, 1);
+            keys.push(`${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`);
+          }
+          return keys; // orden: más viejo -> más nuevo
+        }
+
+        const desiredKeys = lastMonthKeys(3); // [mes-2, mes-1, mes-actual]
+
+        // Indexa datasets que caen dentro de los 3 meses deseados
+        const dsByKey = new Map();
+        for (const ds of allDatasets) {
+          const ym = parseYearMonth(ds?.label);
+          if (!ym) continue;
+          const key = ymKey(ym);
+          if (desiredKeys.includes(key)) {
+            dsByKey.set(key, ds);
+          }
+        }
+
+        // Arma SIEMPRE 3 datasets (si falta alguno, lo rellena con ceros)
+        const displayDatasets = desiredKeys.map((key) => {
+          const original = dsByKey.get(key);
+          if (original) {
+            return { ...original, _forcedLabel: key };
+          }
+          return {
+            label: key,
+            _forcedLabel: key,
+            data: Array.isArray(funnelLabels) ? Array(funnelLabels.length).fill(0) : [],
+            _placeholder: true
+          };
+        });
+
         let currentFunnelIndex = displayDatasets.length ? displayDatasets.length - 1 : 0;
+
 
         function updateNavButtons() {
           if (!prevBtn || !nextBtn) return;
@@ -1117,7 +1225,8 @@
 
           const header = document.createElement('div');
           header.className = 'mb-1 pl-[170px]';
-          const fullMonthRaw = getFullSpanishMonthLabel(dataset.label);
+          const labelForTitle = dataset._forcedLabel || dataset.label;
+          const fullMonthRaw = getFullSpanishMonthLabel(labelForTitle);
           const fullMonthLabel = capitalizeFirst(fullMonthRaw);
           header.innerHTML = `
             <div class="w-full flex justify-center">
@@ -1528,6 +1637,26 @@
         const monthBajas    = {{ ingresos_bajas_month_bajas   | tojson }};
         const yearIB        = {{ ingresos_bajas_year          | tojson }};
 
+const dailyByMonth = {{ ingresos_bajas_daily | tojson }};
+const monthSelect  = document.getElementById('ib-month-select');
+let selectedMonth  = '';
+
+function getDailyConfig(monthStr) {
+  if (!dailyByMonth) return null;
+  const payload = dailyByMonth[String(monthStr)];
+  if (!payload) return null;
+
+  const monthIdx = parseInt(monthStr, 10) - 1;
+  const monthName = (monthLabels && monthLabels[monthIdx]) ? monthLabels[monthIdx] : '';
+  const labels = (payload.labels || []).map(d => monthName ? `${d} ${monthName}` : d);
+
+  return {
+    labels,
+    ingresos: payload.ingresos || [],
+    bajas: payload.bajas || []
+  };
+}
+
         const weekLabels = weekNumbers.map(w => `Sem ${w}`);
         const monthLabelsFull = monthLabels.map(m => `${m} ${yearIB}`);
 
@@ -1537,6 +1666,10 @@
         let currentMode = 'semanal';
 
         function getDatasetConfig(mode) {
+          if (selectedMonth) {
+            const dailyCfg = getDailyConfig(selectedMonth);
+            if (dailyCfg) return dailyCfg;
+          }
           if (mode === 'mensual') {
             return {
               labels: monthLabelsFull,
@@ -1575,35 +1708,62 @@
           };
         }
 
-        const valueLabelPluginIB = {
+        
+        function computeYMaxFromCfg(cfg) {
+          const values = [];
+          if (cfg && Array.isArray(cfg.ingresos)) values.push(...cfg.ingresos);
+          if (cfg && Array.isArray(cfg.bajas)) values.push(...cfg.bajas);
+
+          let maxVal = 0;
+          values.forEach(v => {
+            const n = Number(v);
+            if (!isNaN(n)) maxVal = Math.max(maxVal, n);
+          });
+
+          // Asegura "aire" arriba para que quepan las etiquetas
+          const pad = Math.max(1, Math.ceil(maxVal * 0.12));
+          return maxVal + pad;
+        }
+
+        function applyYMax(chart, cfg) {
+          if (!chart || !chart.options || !chart.options.scales || !chart.options.scales.y) return;
+          chart.options.scales.y.max = computeYMaxFromCfg(cfg);
+        }
+
+const valueLabelPluginIB = {
           id: 'valueLabelPluginIB',
-          afterDatasetsDraw(chart, args, pluginOptions) {
-            const { ctx } = chart;
+          afterDatasetsDraw(chart) {
+            const { ctx, chartArea } = chart;
+            if (!chartArea) return;
+
+            const totalPoints = (chart.data.labels || []).length;
+            const fontSize = totalPoints > 24 ? 9 : 11;
+
             ctx.save();
-            ctx.font = '11px sans-serif';
+            ctx.font = `${fontSize}px sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'bottom';
             ctx.fillStyle = '#0f172a';
+
+            // Mantén las etiquetas dentro del área del gráfico para que no se "recorten"
+            const topLimit = chartArea.top + fontSize + 2;
+
             chart.data.datasets.forEach((dataset, datasetIndex) => {
-              if (!chart.isDatasetVisible(datasetIndex)) {
-                return;
-              }
+              if (!chart.isDatasetVisible(datasetIndex)) return;
               const meta = chart.getDatasetMeta(datasetIndex);
+
               meta.data.forEach((bar, i) => {
                 const val = dataset.data[i];
                 if (val == null || isNaN(val)) return;
+
                 const x = bar.x;
                 let y = bar.y - 4;
-                if (datasetIndex === 1) {
-                  y = y - 10;
-                }
-                ctx.fillText(
-                  Number(val).toLocaleString('es-MX'),
-                  x,
-                  y
-                );
+                if (y < topLimit) y = topLimit;
+
+                ctx.fillText(Number(val).toLocaleString('es-MX'), x, y);
               });
             });
+
             ctx.restore();
           }
         };
@@ -1611,7 +1771,7 @@
         const monthSeparatorPluginIB = {
           id: 'monthSeparatorPluginIB',
           afterDraw(chart, args, pluginOptions) {
-            if (currentMode !== 'semanal') return;
+            if (currentMode !== 'semanal' || selectedMonth) return;
             const xAxis = chart.scales.x;
             const chartArea = chart.chartArea;
             if (!xAxis || !chartArea) return;
@@ -1658,7 +1818,7 @@
           },
           layout: {
             padding: {
-              top: 20,
+              top: 28,
               right: 0,
               bottom: 0,
               left: 0
@@ -1711,6 +1871,7 @@
         };
 
         const initialCfg = getDatasetConfig(currentMode);
+        baseOptions.scales.y.max = computeYMaxFromCfg(initialCfg);
         let ibChart = new Chart(ctxIB, {
           type: 'bar',
           data: buildChartData(initialCfg),
@@ -1719,9 +1880,14 @@
         });
 
         function setActiveMode(mode) {
+          if (selectedMonth) {
+            selectedMonth = '';
+            if (monthSelect) monthSelect.value = '';
+          }
           currentMode = mode;
           const cfg = getDatasetConfig(mode);
           ibChart.data = buildChartData(cfg);
+          applyYMax(ibChart, cfg);
           ibChart.update();
           if (semanalBtn && mensualBtn) {
             if (mode === 'semanal') {
@@ -1743,6 +1909,16 @@
         }
         if (mensualBtn) {
           mensualBtn.addEventListener('click', () => setActiveMode('mensual'));
+        }
+
+        if (monthSelect) {
+          monthSelect.addEventListener('change', () => {
+            selectedMonth = monthSelect.value || '';
+            const cfg = getDatasetConfig(currentMode);
+            ibChart.data = buildChartData(cfg);
+            applyYMax(ibChart, cfg);
+            ibChart.update();
+          });
         }
 
         setActiveMode(currentMode);
@@ -2012,25 +2188,7 @@
           .sort((a, b) => b.total - a.total)
           .map(obj => obj.reclutador);
 
-        const datasetsStack = [];
-        let colorIdx = 0;
-        reclutadoresOrdenados.forEach((rec) => {
-          const color = palette[colorIdx % palette.length];
-          colorIdx += 1;
-          datasetsStack.push({
-            label: rec,
-            type: 'bar',
-            data: leadsPorReclutador[rec],
-            backgroundColor: color,
-            borderColor: color,
-            borderWidth: 1,
-            borderRadius: 4,
-            stack: 'stack1',
-            maxBarThickness: 38
-          });
-        });
-
-        const totalDataset = {
+        const totalDatasetBase = {
           label: 'TOTAL',
           type: 'line',
           data: leadsTotal,
@@ -2044,8 +2202,6 @@
           hidden: false,
           yAxisID: 'y'
         };
-
-        const allDatasets = [...datasetsStack, totalDataset];
 
         const totalLabelPluginLeads = {
           id: 'totalLabelPluginLeads',
@@ -2086,13 +2242,80 @@
           }
         };
 
-        new Chart(ctxLeads, {
-          type: 'bar',
-          data: {
-            labels: leadsLabels,
-            datasets: allDatasets
-          },
-          options: {
+        const btnLeadsStack = document.getElementById('leads-toggle-stack');
+        const btnLeadsLine  = document.getElementById('leads-toggle-line');
+
+        let leadsChart = null;
+
+        function setLeadsButtons(mode) {
+          const active = 'bg-[#0c376c] text-white shadow-sm';
+          const inactive = 'text-slate-700 bg-slate-100';
+          if (btnLeadsStack) {
+            btnLeadsStack.className = `px-3 py-1.5 rounded-full font-medium ${mode === 'stack' ? active : inactive}`;
+          }
+          if (btnLeadsLine) {
+            btnLeadsLine.className = `px-3 py-1.5 rounded-full font-medium ${mode === 'line' ? active : inactive}`;
+          }
+        }
+
+        function buildLeadsDatasets(mode) {
+          const datasets = [];
+          let colorIdx = 0;
+
+          if (mode === 'line') {
+            reclutadoresOrdenados.forEach((rec) => {
+              const color = palette[colorIdx % palette.length];
+              colorIdx += 1;
+              datasets.push({
+                label: rec,
+                type: 'line',
+                data: leadsPorReclutador[rec],
+                borderColor: color,
+                backgroundColor: color,
+                borderWidth: 2,
+                tension: 0.25,
+                pointRadius: 3,
+                pointHoverRadius: 4,
+                fill: false,
+                yAxisID: 'y'
+              });
+            });
+
+            datasets.push({
+              ...totalDatasetBase,
+              borderWidth: 3,
+              pointRadius: 4,
+              pointHoverRadius: 5
+            });
+
+            return datasets;
+          }
+
+          // stack (default)
+          reclutadoresOrdenados.forEach((rec) => {
+            const color = palette[colorIdx % palette.length];
+            colorIdx += 1;
+            datasets.push({
+              label: rec,
+              type: 'bar',
+              data: leadsPorReclutador[rec],
+              backgroundColor: color,
+              borderColor: color,
+              borderWidth: 1,
+              borderRadius: 4,
+              stack: 'stack1',
+              maxBarThickness: 38
+            });
+          });
+
+          datasets.push({ ...totalDatasetBase });
+          return datasets;
+        }
+
+        function buildLeadsOptions(mode) {
+          const isStack = mode === 'stack';
+
+          return {
             responsive: true,
             maintainAspectRatio: false,
             interaction: {
@@ -2129,7 +2352,7 @@
             },
             scales: {
               x: {
-                stacked: true,
+                stacked: isStack,
                 grid: {
                   display: false
                 },
@@ -2140,7 +2363,7 @@
                 }
               },
               y: {
-                stacked: true,
+                stacked: isStack,
                 beginAtZero: true,
                 ticks: {
                   callback: function (value) {
@@ -2154,9 +2377,36 @@
                 }
               }
             }
-          },
-          plugins: [totalLabelPluginLeads]
-        });
+          };
+        }
+
+        function renderLeadsChart(mode) {
+          if (leadsChart) {
+            leadsChart.destroy();
+          }
+
+          leadsChart = new Chart(ctxLeads, {
+            type: mode === 'line' ? 'line' : 'bar',
+            data: {
+              labels: leadsLabels,
+              datasets: buildLeadsDatasets(mode)
+            },
+            options: buildLeadsOptions(mode),
+            plugins: [totalLabelPluginLeads]
+          });
+
+          setLeadsButtons(mode);
+        }
+
+        // Modo inicial: Stack (actual)
+        renderLeadsChart('stack');
+
+        if (btnLeadsStack) {
+          btnLeadsStack.addEventListener('click', () => renderLeadsChart('stack'));
+        }
+        if (btnLeadsLine) {
+          btnLeadsLine.addEventListener('click', () => renderLeadsChart('line'));
+        }
       }
 
       // === Gráfica CANALES DE INGRESO (todos los meses, canales como filtros) ===
