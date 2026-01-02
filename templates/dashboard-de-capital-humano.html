@@ -209,7 +209,9 @@
 
         <!-- >>> NUEVO: Filtro universal de campaña -->
       <form method="GET" class="flex items-center">
-        <label for="campania-select" class="sr-only">Campaña</label>
+        
+        <input type="hidden" name="historico_year" value="{{ historico_year_selected }}">
+<label for="campania-select" class="sr-only">Campaña</label>
 
         <div class="relative inline-block w-auto min-w-[90px]">
           <!-- SELECT funcional (invisible pero clickeable) -->
@@ -554,6 +556,7 @@
             <h2 class="text-lg md:text-xl font-semibold text-slate-900">
               Ingresos vs Bajas
             </h2>
+            <p class="text-xs text-slate-500">Últimos 12 meses: {{ ingresos_bajas_periodo }}</p>
           </div>
           <div class="flex items-center gap-2">
             
@@ -566,7 +569,7 @@
   >
     <option value="">Mes (por día)</option>
     {% for mes in ingresos_bajas_month_labels %}
-      <option value="{{ loop.index }}">{{ mes }} {{ ingresos_bajas_year }}</option>
+      <option value="{{ loop.index }}">{{ mes }}</option>
     {% endfor %}
   </select>
   <i class="fas fa-chevron-down pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-500"></i>
@@ -608,8 +611,21 @@
                 Histórico - Ingresos vs Bajas
               </h2>
               <p class="text-xs text-slate-500">
-                Acumulado Semanal {{ ingresos_bajas_year }}
+                Acumulado semanal — {{ historico_periodo_text }}
               </p>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <label for="historicoYearSelect" class="text-xs text-slate-500">Año</label>
+              <select
+                id="historicoYearSelect"
+                class="text-xs rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-700
+                       focus:outline-none focus:ring-2 focus:ring-slate-300"
+              >
+                {% for y in historico_years %}
+                  <option value="{{ y }}" {% if y == historico_year_selected %}selected{% endif %}>{{ y }}</option>
+                {% endfor %}
+              </select>
             </div>
           </div>
           <div class="h-56 md:h-64 lg:h-64">
@@ -1058,7 +1074,18 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', () => {
-      const btnPDF = document.getElementById('download-pdf');
+      
+      // === Selector de año para Histórico (acumulado anual) ===
+      const historicoYearSelect = document.getElementById('historicoYearSelect');
+      if (historicoYearSelect) {
+        historicoYearSelect.addEventListener('change', (e) => {
+          const y = String(e.target.value || '').trim();
+          const url = new URL(window.location.href);
+          if (y) url.searchParams.set('historico_year', y);
+          window.location.href = url.toString();
+        });
+      }
+const btnPDF = document.getElementById('download-pdf');
       if (btnPDF) {
         btnPDF.addEventListener('click', () => {
           html2pdf().set({
@@ -1628,15 +1655,13 @@
       if (ibCanvas) {
         const ctxIB = ibCanvas.getContext('2d');
 
-        const weekNumbers   = {{ ingresos_bajas_week_labels   | tojson }};
+        const weekLabels    = {{ ingresos_bajas_week_labels   | tojson }};
         const weekIngresos  = {{ ingresos_bajas_week_ingresos | tojson }};
         const weekBajas     = {{ ingresos_bajas_week_bajas    | tojson }};
         const weekMonths    = {{ ingresos_bajas_week_month_numbers | tojson }};
         const monthLabels   = {{ ingresos_bajas_month_labels  | tojson }};
         const monthIngresos = {{ ingresos_bajas_month_ingresos| tojson }};
         const monthBajas    = {{ ingresos_bajas_month_bajas   | tojson }};
-        const yearIB        = {{ ingresos_bajas_year          | tojson }};
-
 const dailyByMonth = {{ ingresos_bajas_daily | tojson }};
 const monthSelect  = document.getElementById('ib-month-select');
 let selectedMonth  = '';
@@ -1657,8 +1682,6 @@ function getDailyConfig(monthStr) {
   };
 }
 
-        const weekLabels = weekNumbers.map(w => `Sem ${w}`);
-        const monthLabelsFull = monthLabels.map(m => `${m} ${yearIB}`);
 
         const semanalBtn = document.getElementById('ib-toggle-semanal');
         const mensualBtn = document.getElementById('ib-toggle-mensual');
@@ -1672,7 +1695,7 @@ function getDailyConfig(monthStr) {
           }
           if (mode === 'mensual') {
             return {
-              labels: monthLabelsFull,
+              labels: monthLabels,
               ingresos: monthIngresos,
               bajas: monthBajas
             };
@@ -1932,9 +1955,9 @@ const valueLabelPluginIB = {
         const weekCumLabels    = {{ ingresos_bajas_cum_week_labels | tojson }};
         const weekCumIngresos  = {{ ingresos_bajas_cum_ingresos     | tojson }};
         const weekCumBajas     = {{ ingresos_bajas_cum_bajas        | tojson }};
-        const weekMonthsAcum   = {{ ingresos_bajas_week_month_numbers | tojson }};
+        const weekMonthsAcum   = {{ ingresos_bajas_cum_week_month_numbers | tojson }};
 
-        const weekCumLabelsText = weekCumLabels.map(w => `Sem ${w}`);
+        const weekCumLabelsText = weekCumLabels;
         const weekCumDiff = weekCumIngresos.map((v, i) => {
           const ing = Number(v || 0);
           const baj = Number(weekCumBajas[i] || 0);
@@ -3080,7 +3103,6 @@ const valueLabelPluginIB = {
 
         const antiguedadLabels = {{ antiguedad_bajas_labels | tojson }};
         const antiguedadValues = {{ antiguedad_bajas_values | tojson }};
-        const antiguedadYear   = {{ antiguedad_bajas_year   | tojson }};
 
         // Plugin para mostrar el valor encima de cada barra
         const valueLabelPluginAnt = {
