@@ -229,6 +229,17 @@ def index():
     
     campania_param = request.args.get("campania", default="", type=str).strip()
     campania_seleccionada = campania_param or None
+    # Filtro para el gráfico histórico (acumulado anual): por defecto el año actual
+    _mx_today = dt.datetime.now(pytz.timezone("America/Mexico_City")).date()
+    _current_year = int(_mx_today.year)
+    _historico_year_raw = request.args.get("historico_year", default=str(_current_year), type=str).strip()
+    try:
+        historico_year_selected = int(_historico_year_raw) if _historico_year_raw else _current_year
+    except Exception:
+        historico_year_selected = _current_year
+    if historico_year_selected > _current_year:
+        historico_year_selected = _current_year
+
 
     service = build_sheets_service()
     df_reclutamiento_full = get_data_sheets()
@@ -733,86 +744,161 @@ def index():
     def _to_datetime(series, dayfirst=True):
         return pd.to_datetime(series, dayfirst=dayfirst, errors="coerce")
 
-    def _weekly_counts_from_dates(dates, year):
-        dates = pd.to_datetime(dates, errors="coerce")
-        dates = dates[dates.notna()]
-        mask_year = dates.dt.year == year
-        weeks     = dates[mask_year].dt.isocalendar().week
-        counts    = weeks.value_counts().sort_index()
-        full_index = pd.Index(range(1, 54), name="Semana")
-        return counts.reindex(full_index, fill_value=0)
+    # Ventana: últimos 12 meses **incluyendo el mes actual** (mes actual a la fecha)
+    # Ej.: si hoy es 2026-01-01, el rango queda 2025-02-01 .. 2026-01-01 (y los meses: feb-2025 .. ene-2026)
+    mx_now = pd.Timestamp.now(tz=pytz.timezone("America/Mexico_City")).tz_localize(None)
+    _month_start = mx_now.normalize().replace(day=1)
+    # Nota: usamos fin del día de hoy para no perder registros con hora.
+    RANGE_END   = (mx_now.normalize() + pd.Timedelta(days=1)) - pd.Timedelta(microseconds=1)
+    RANGE_START = _month_start - pd.DateOffset(months=11)
+    months_12   = pd.date_range(start=RANGE_START, periods=12, freq="MS")
 
-    ingresos_activos       = _to_datetime(df_plantilla_activa["FECHA DE INGRESO"], dayfirst=True)
-    bajas_baja_dates       = _to_datetime(df_plantilla_bajas["BAJA"], dayfirst=True)
-    bajas_ingreso_dates    = _to_datetime(df_plantilla_bajas["FECHA DE INGRESO"], dayfirst=True)
-    mask_bajas_validas     = bajas_ingreso_dates.notna()
+    ingresos_activos        = _to_datetime(df_plantilla_activa["FECHA DE INGRESO"], dayfirst=True)
+    bajas_baja_dates        = _to_datetime(df_plantilla_bajas["BAJA"], dayfirst=True)
+    bajas_ingreso_dates     = _to_datetime(df_plantilla_bajas["FECHA DE INGRESO"], dayfirst=True)
+    mask_bajas_validas      = bajas_ingreso_dates.notna()
     bajas_baja_dates_validas = bajas_baja_dates[mask_bajas_validas]
-    ingresos_todos         = pd.concat([ingresos_activos, bajas_ingreso_dates], ignore_index=True)
 
-    YEAR = pd.Timestamp.today().year
+    # Ingresos = ingresos de activos + ingresos de bajas (histórico)
+    ingresos_todos = pd.concat([ingresos_activos, bajas_ingreso_dates], ignore_index=True)
 
-    def _years_in_series(d):
+    def _filter_range(dates, start, end):
+        d = pd.to_datetime(dates, errors="coerce")
+        d = d[d.notna()]
+        return d[(d >= start) & (d <= end)]
+
+    def _weekly_counts_from_dates(dates, start, end):
+        d = _filter_range(dates, start, end)
+        if d.empty:
+            # índice completo de semanas en rango
+            start_monday = start - pd.Timedelta(days=int(start.weekday()))
+            end_monday   = end   - pd.Timedelta(days=int(end.weekday()))
+            idx = pd.date_range(start=start_monday, end=end_monday, freq="W-MON")
+            return pd.Series(0, index=idx)
+
+        week_start = d - pd.to_timedelta(d.dt.weekday, unit="D")  # lunes
+        counts = week_start.value_counts().sort_index()
+
+        start_monday = start - pd.Timedelta(days=int(start.weekday()))
+        end_monday   = end   - pd.Timedelta(days=int(end.weekday()))
+        idx = pd.date_range(start=start_monday, end=end_monday, freq="W-MON")
+        return counts.reindex(idx, fill_value=0).astype(int)
+
+    def _weekly_counts_for_year(dates, year_start, year_end):
+        """Conteo semanal dentro de un año, incluyendo una primera 'semana parcial' desde year_start hasta el primer lunes."""
+        year_start = pd.to_datetime(year_start)
+        year_end   = pd.to_datetime(year_end)
+        d = _filter_range(dates, year_start, year_end)
+
+        first_monday = year_start + pd.Timedelta(days=(7 - int(year_start.weekday())) % 7)
+
+        def _build_index():
+            if first_monday == year_start:
+                return pd.date_range(start=year_start, end=year_end, freq="W-MON")
+            return pd.DatetimeIndex([year_start]).append(
+                pd.date_range(start=first_monday, end=year_end, freq="W-MON")
+            )
+
+        if d.empty:
+            idx = _build_index()
+            return pd.Series(0, index=idx).astype(int)
+
+        # Asignación de bucket: antes del primer lunes -> year_start; después -> lunes de esa semana
         d = pd.to_datetime(d, errors="coerce")
-        return d.dt.year.dropna().astype(int).unique()
+        d = d[d.notna()]
+        if first_monday > year_start:
+            mask_first = d < first_monday
+            buckets = pd.Series(index=d.index, dtype="datetime64[ns]")
+            buckets.loc[mask_first] = year_start
+            buckets.loc[~mask_first] = d[~mask_first] - pd.to_timedelta(d[~mask_first].dt.weekday, unit="D")
+        else:
+            buckets = d - pd.to_timedelta(d.dt.weekday, unit="D")
 
-    years_candidates     = sorted(set(_years_in_series(ingresos_todos)).union(set(_years_in_series(bajas_baja_dates_validas))), reverse=True)
-    ingresos_year_counts = _weekly_counts_from_dates(ingresos_todos, YEAR)
-    bajas_year_counts    = _weekly_counts_from_dates(bajas_baja_dates_validas, YEAR)
-    if (ingresos_year_counts.sum() + bajas_year_counts.sum()) == 0 and len(years_candidates) > 0 and YEAR not in years_candidates:
-        YEAR = years_candidates[0]
-        ingresos_year_counts = _weekly_counts_from_dates(ingresos_todos, YEAR)
-        bajas_year_counts    = _weekly_counts_from_dates(bajas_baja_dates_validas, YEAR)
+        counts = buckets.value_counts().sort_index()
+        idx = _build_index()
+        return counts.reindex(idx, fill_value=0).astype(int)
 
-    weeks = pd.Index(range(1, 54), name="Semana")
+    def _monthly_counts_from_dates(dates, month_starts, start, end):
+        d = _filter_range(dates, start, end)
+        if d.empty:
+            return pd.Series(0, index=month_starts).astype(int)
+        month_key = d.dt.to_period("M").dt.to_timestamp()
+        counts = month_key.value_counts().sort_index()
+        return counts.reindex(month_starts, fill_value=0).astype(int)
+
+    # Semanal (últimos 12 meses)
+    ingresos_week_counts = _weekly_counts_from_dates(ingresos_todos, RANGE_START, RANGE_END)
+    bajas_week_counts    = _weekly_counts_from_dates(bajas_baja_dates_validas, RANGE_START, RANGE_END)
+
+    week_index      = ingresos_week_counts.index
+    week_labels     = [pd.to_datetime(w).strftime("%d/%m/%y") for w in week_index]
+    week_month_nums = [int(pd.to_datetime(w).month) for w in week_index]
+
     df_semana = pd.DataFrame({
-        "Semana": weeks,
-        "Ingresos": ingresos_year_counts.reindex(weeks, fill_value=0).values,
-        "Bajas": bajas_year_counts.reindex(weeks, fill_value=0).values
+        "SemanaLabel": week_labels,
+        "Ingresos": ingresos_week_counts.values,
+        "Bajas": bajas_week_counts.reindex(week_index, fill_value=0).values
     })
-    week_month_nums = []
-    for w in df_semana["Semana"]:
-        try:
-            d = dt.datetime.fromisocalendar(int(YEAR), int(w), 1)
-            week_month_nums.append(int(d.month))
-        except Exception:
-            week_month_nums.append(None)
 
-    def _monthly_counts_from_dates(dates, year):
-        dates = pd.to_datetime(dates, errors="coerce")
-        dates = dates[dates.notna()]
-        dates = dates[dates.dt.year == year]
-        counts = dates.dt.month.value_counts().sort_index()
-        full_index = pd.Index(range(1, 13), name="Mes")
-        return counts.reindex(full_index, fill_value=0)
+    # Mensual (últimos 12 meses)
+    ingresos_month_counts = _monthly_counts_from_dates(ingresos_todos, months_12, RANGE_START, RANGE_END)
+    bajas_month_counts    = _monthly_counts_from_dates(bajas_baja_dates_validas, months_12, RANGE_START, RANGE_END)
 
-    ingresos_month_counts = _monthly_counts_from_dates(ingresos_todos, YEAR)
-    bajas_month_counts    = _monthly_counts_from_dates(bajas_baja_dates_validas, YEAR)
-    meses_numeros         = list(range(1, 13))
-    meses_labels_corto    = MESES_ES_CORTO[:12]
-    ingresos_mes          = [int(ingresos_month_counts.get(m, 0)) for m in meses_numeros]
-    bajas_mes             = [int(bajas_month_counts.get(m, 0)) for m in meses_numeros]
+    meses_labels_12 = [f"{MESES_ES_CORTO[m.month - 1]} {m.year}" for m in months_12]
+    ingresos_mes    = ingresos_month_counts.tolist()
+    bajas_mes       = bajas_month_counts.tolist()
 
-    def _daily_counts_from_dates(dates, year, month):
-        dates = pd.to_datetime(dates, errors="coerce")
-        dates = dates[dates.notna()]
-        dates = dates[(dates.dt.year == year) & (dates.dt.month == month)]
+    # Diario (drilldown por cada uno de los 12 meses del rango)
+    def _daily_counts_for_month(dates, year, month):
+        d = pd.to_datetime(dates, errors="coerce")
+        d = d[d.notna()]
+        d = d[(d.dt.year == int(year)) & (d.dt.month == int(month))]
         days_in_month = calendar.monthrange(int(year), int(month))[1]
         idx = pd.Index(range(1, days_in_month + 1), name="Dia")
-        counts = dates.dt.day.value_counts().sort_index().reindex(idx, fill_value=0).astype(int)
-        labels = [f"{d:02d}" for d in idx.tolist()]
+        counts = d.dt.day.value_counts().sort_index().reindex(idx, fill_value=0).astype(int)
+        labels = [f"{day:02d}" for day in idx.tolist()]
         return labels, counts.tolist()
 
     ingresos_bajas_daily = {}
-    for m in range(1, 13):
-        dlabels, dingresos = _daily_counts_from_dates(ingresos_todos, YEAR, m)
-        _, dbajas = _daily_counts_from_dates(bajas_baja_dates_validas, YEAR, m)
-        ingresos_bajas_daily[str(m)] = {"labels": dlabels, "ingresos": dingresos, "bajas": dbajas}
+    for i, mstart in enumerate(months_12, start=1):
+        y, m = int(mstart.year), int(mstart.month)
+        dlabels, dingresos = _daily_counts_for_month(ingresos_todos, y, m)
+        _, dbajas          = _daily_counts_for_month(bajas_baja_dates_validas, y, m)
+        ingresos_bajas_daily[str(i)] = {"labels": dlabels, "ingresos": dingresos, "bajas": dbajas}
 
+    # === Histórico (Acumulado semanal por año seleccionado) ===
+    historico_year_start = pd.Timestamp(int(historico_year_selected), 1, 1)
+    if int(historico_year_selected) == int(mx_now.year):
+        historico_year_end = RANGE_END
+        historico_periodo_text = f"{int(historico_year_selected)} (al {mx_now.strftime('%d/%m/%Y')})"
+    else:
+        historico_year_end = pd.Timestamp(int(historico_year_selected), 12, 31, 23, 59, 59, 999999)
+        historico_periodo_text = f"{int(historico_year_selected)} (enero - diciembre)"
 
-    df_semana_cum = df_semana.copy()
+    ingresos_week_year = _weekly_counts_for_year(ingresos_todos, historico_year_start, historico_year_end)
+    bajas_week_year    = _weekly_counts_for_year(bajas_baja_dates_validas, historico_year_start, historico_year_end)
+
+    week_cum_index      = ingresos_week_year.index
+    week_cum_labels     = [pd.to_datetime(w).strftime("%d/%m/%y") for w in week_cum_index]
+    week_cum_month_nums = [int(pd.to_datetime(w).month) for w in week_cum_index]
+
+    df_semana_cum = pd.DataFrame({
+        "SemanaLabel": week_cum_labels,
+        "Ingresos": ingresos_week_year.values,
+        "Bajas": bajas_week_year.reindex(week_cum_index, fill_value=0).values,
+    })
     df_semana_cum["Ingresos acumulados"] = df_semana_cum["Ingresos"].cumsum()
     df_semana_cum["Bajas acumuladas"]    = df_semana_cum["Bajas"].cumsum()
 
+    # Lista de años disponibles para el selector (basado en los datos, más el año actual)
+    _all_years_series = pd.concat([
+        pd.to_datetime(ingresos_todos, errors="coerce"),
+        pd.to_datetime(bajas_baja_dates_validas, errors="coerce"),
+    ], ignore_index=True).dt.year.dropna().astype(int)
+    historico_years = sorted(set(_all_years_series.tolist() + [int(_current_year)]), reverse=True)
+
+    # Etiqueta de periodo para UI
+    ingresos_bajas_periodo = f"{meses_labels_12[0]} - {meses_labels_12[-1]}"
     ################################ LEADS POR RECLUTADOR ########################################
 
     if not data_reclutamiento.empty and "fecha_publicacion" in data_reclutamiento.columns:
@@ -878,8 +964,8 @@ def index():
         errors='coerce'
     )
     df = df.dropna(subset=['FECHA DE INGRESO'])
-    anio_actual = pd.Timestamp.today().year
-    df = df[df['FECHA DE INGRESO'].dt.year == anio_actual]
+    # Últimos 12 meses completos
+    df = df[(df['FECHA DE INGRESO'] >= RANGE_START) & (df['FECHA DE INGRESO'] <= RANGE_END)]
     df['anio_mes'] = df['FECHA DE INGRESO'].dt.strftime('%Y-%m')
     print(df_plantilla_activa.columns.tolist())
 
@@ -904,24 +990,32 @@ def index():
 
     # PAUTA
     if not data_reclutamiento.empty and "fecha_publicacion" in data_reclutamiento.columns:
-        data_reclutamiento["fecha_publicacion"] = pd.to_datetime(
-            data_reclutamiento["fecha_publicacion"],
+        dr_canales = data_reclutamiento.copy()
+        dr_canales["fecha_publicacion"] = pd.to_datetime(
+            dr_canales["fecha_publicacion"],
             errors="coerce"
         )
-        data_reclutamiento["anio_mes"] = data_reclutamiento["fecha_publicacion"].dt.strftime("%Y-%m")
-        if "folio" in data_reclutamiento.columns:
-            mask_referido = data_reclutamiento["folio"] == "Referido"
-        else:
-            mask_referido = pd.Series(False, index=data_reclutamiento.index)
+        # Últimos 12 meses completos
+        dr_canales = dr_canales[
+            (dr_canales["fecha_publicacion"] >= RANGE_START) &
+            (dr_canales["fecha_publicacion"] <= RANGE_END)
+        ]
+        dr_canales["anio_mes"] = dr_canales["fecha_publicacion"].dt.strftime("%Y-%m")
 
-        df_ref = data_reclutamiento[mask_referido].copy()
+        if "folio" in dr_canales.columns:
+            mask_referido = dr_canales["folio"] == "Referido"
+        else:
+            mask_referido = pd.Series(False, index=dr_canales.index)
+
+        df_ref = dr_canales[mask_referido].copy()
         agg_ref = (
             df_ref
             .groupby(["canal", "anio_mes"])
             .size()
             .reset_index(name="folios_unicos")
         )
-        df_no_ref = data_reclutamiento[~mask_referido].copy()
+
+        df_no_ref = dr_canales[~mask_referido].copy()
         if {"canal", "folio", "anio_mes"}.issubset(df_no_ref.columns):
             df_no_ref = df_no_ref.drop_duplicates(subset=["canal", "folio", "anio_mes"])
             agg_no_ref = (
@@ -940,6 +1034,7 @@ def index():
             .sum()
             .reset_index()
         )
+
         canales_pauta_por_mes      = {}
         canales_pauta_meses_labels = []
         if not resumen.empty:
@@ -999,11 +1094,12 @@ def index():
 
     ################################ MOTIVOS DE BAJA #############################################
 
+    # Motivos (últimos 12 meses completos)
     df = df_plantilla_bajas.copy()
     df["BAJA"] = pd.to_datetime(df["BAJA"], dayfirst=True, errors="coerce")
-    mask_year = df["BAJA"].dt.year == YEAR
-    df_year = df.loc[mask_year]
-    serie = df_year["MOTIVO"].fillna("SIN MOTIVO")
+    df = df[(df["BAJA"] >= RANGE_START) & (df["BAJA"] <= RANGE_END)]
+
+    serie = df["MOTIVO"].fillna("SIN MOTIVO")
     resumen_pct = (
         serie.value_counts(dropna=False, normalize=True)
         .rename_axis("MOTIVO")
@@ -1018,37 +1114,44 @@ def index():
         resumen_pct.merge(resumen_cnt, on="MOTIVO")
         .sort_values("porcentaje", ascending=False)
     )
-    umbral = 0.028  
+
+    umbral = 0.028
     resumen["porcentaje"] = resumen["porcentaje"].astype(float)
+
     principales = resumen[resumen["porcentaje"] >= umbral].copy()
     otros_conteo = resumen.loc[resumen["porcentaje"] < umbral, "conteo"].sum()
+
     motivos_baja_labels = principales["MOTIVO"].astype(str).tolist()
     motivos_baja_values = principales["conteo"].astype(int).tolist()
     if otros_conteo > 0:
         motivos_baja_labels.append("Otros")
         motivos_baja_values.append(int(otros_conteo))
 
-    # TABLA motivos baja por mes
-    df = df_plantilla_bajas.copy()
-    df["BAJA"] = pd.to_datetime(df["BAJA"], dayfirst=True, errors="coerce")
-    df_year = df.loc[df["BAJA"].dt.year == YEAR].copy()
+    # TABLA motivos baja por mes (últimos 12 meses)
+    df_tab = df_plantilla_bajas.copy()
+    df_tab["BAJA"] = pd.to_datetime(df_tab["BAJA"], dayfirst=True, errors="coerce")
+    df_tab = df_tab[(df_tab["BAJA"] >= RANGE_START) & (df_tab["BAJA"] <= RANGE_END)].copy()
 
-    meses_es = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
-                "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
-    mes_map = {i+1: mes for i, mes in enumerate(meses_es)}
+    meses_12_labels = [f"{MESES_ES_CORTO[m.month - 1]} {m.year}" for m in months_12]
 
-    df_year["Mes"] = pd.Categorical(
-        df_year["BAJA"].dt.month.map(mes_map),
-        categories=meses_es,
+    df_tab["Mes"] = df_tab["BAJA"].dt.to_period("M").dt.to_timestamp()
+    df_tab["MesLabel"] = df_tab["Mes"].apply(
+        lambda d: f"{MESES_ES_CORTO[int(d.month) - 1]} {int(d.year)}" if pd.notna(d) else ""
+    )
+
+    df_tab["MesLabel"] = pd.Categorical(
+        df_tab["MesLabel"],
+        categories=meses_12_labels,
         ordered=True
     )
+
     pivot = pd.crosstab(
-        df_year["MOTIVO"].fillna("SIN MOTIVO"),
-        df_year["Mes"],
+        df_tab["MOTIVO"].fillna("SIN MOTIVO"),
+        df_tab["MesLabel"],
         margins=True,
         margins_name="Total"
     )
-    pivot = pivot.reindex(columns=meses_es + ["Total"]).fillna(0).astype(int)
+    pivot = pivot.reindex(columns=meses_12_labels + ["Total"]).fillna(0).astype(int)
 
     if "Total" in pivot.index:
         total_row = pivot.loc[["Total"]]
@@ -1062,46 +1165,39 @@ def index():
     tabla_motivos_baja_rows    = tabla.to_dict(orient="records")
     tabla_motivos_baja_columns = [col for col in tabla.columns if col != "MOTIVO"]
 
-    # Antigüedad promedio de bajas
-    df = df_plantilla_bajas.copy()
+    # Antigüedad promedio de bajas (últimos 12 meses)
+    df_ant = df_plantilla_bajas.copy()
     for col in ["FECHA DE INGRESO", "BAJA"]:
-        df[col] = pd.to_datetime(df[col], dayfirst=True, errors="coerce")
+        df_ant[col] = pd.to_datetime(df_ant[col], dayfirst=True, errors="coerce")
+
     mask_valid = (
-        df["BAJA"].notna() &
-        df["FECHA DE INGRESO"].notna() &
-        (df["BAJA"].dt.year == YEAR)
+        df_ant["BAJA"].notna() &
+        df_ant["FECHA DE INGRESO"].notna() &
+        (df_ant["BAJA"] >= RANGE_START) &
+        (df_ant["BAJA"] <= RANGE_END)
     )
     df_calc = (
-        df.loc[mask_valid]
+        df_ant.loc[mask_valid]
         .assign(
             antiguedad_meses=lambda d: (d["BAJA"] - d["FECHA DE INGRESO"]).dt.days / 30.4375,
-            MesNum=lambda d: d["BAJA"].dt.month
+            Mes=lambda d: d["BAJA"].dt.to_period("M").dt.to_timestamp()
         )
     )
-    idx = pd.Index(range(1, 13), name="MesNum")
+
     prom = (
-        df_calc.groupby("MesNum", as_index=True)["antiguedad_meses"]
-            .mean()
-            .reindex(idx)
-            .reset_index()
+        df_calc.groupby("Mes", as_index=False)["antiguedad_meses"]
+        .mean()
     )
-    meses_esp = {
-        1: "Ene", 2: "Feb", 3: "Mar", 4: "Abr",
-        5: "May", 6: "Jun", 7: "Jul", 8: "Ago",
-        9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"
-    }
-    prom["Mes"] = prom["MesNum"].map(meses_esp)
-    orden_meses = list(meses_esp.values())
-    prom["Mes"] = pd.Categorical(prom["Mes"], categories=orden_meses, ordered=True)
-    prom = prom.sort_values("MesNum")
-    antiguedad_bajas_labels = prom["Mes"].tolist()
+
+    prom = prom.set_index("Mes").reindex(months_12).reset_index().rename(columns={"index": "Mes"})
+    prom["MesLabel"] = prom["Mes"].apply(lambda d: f"{MESES_ES_CORTO[int(d.month)-1]} {int(d.year)}" if pd.notna(d) else "")
+    antiguedad_bajas_labels = prom["MesLabel"].tolist()
     antiguedad_bajas_values = (
         prom["antiguedad_meses"]
         .round(1)
         .fillna(0)
         .tolist()
     )
-
     ############################################# VARIABLES A ENVIAR ##############################################
 
     return render_template(
@@ -1134,19 +1230,25 @@ def index():
         cobertura_activos=cobertura_activos,
         cobertura_detalle_rows=cobertura_detalle_rows,
         # Ingresos vs bajas semanal / mensual
-        ingresos_bajas_year=int(YEAR),
-        ingresos_bajas_week_labels=df_semana["Semana"].astype(int).tolist(),
+        # Ingresos vs bajas semanal / mensual (últimos 12 meses)
+        ingresos_bajas_periodo=ingresos_bajas_periodo,
+        ingresos_bajas_week_labels=df_semana["SemanaLabel"].astype(str).tolist(),
         ingresos_bajas_week_ingresos=df_semana["Ingresos"].astype(int).tolist(),
         ingresos_bajas_week_bajas=df_semana["Bajas"].astype(int).tolist(),
         ingresos_bajas_week_month_numbers=week_month_nums,
-        ingresos_bajas_month_labels=meses_labels_corto,
-        ingresos_bajas_month_ingresos=ingresos_mes,
-        ingresos_bajas_month_bajas=bajas_mes,
+        ingresos_bajas_month_labels=meses_labels_12,
+        ingresos_bajas_month_ingresos=[int(x) for x in ingresos_mes],
+        ingresos_bajas_month_bajas=[int(x) for x in bajas_mes],
         ingresos_bajas_daily=ingresos_bajas_daily,
         # Ingresos vs bajas acumulado
-        ingresos_bajas_cum_week_labels=df_semana_cum["Semana"].astype(int).tolist(),
+        # Ingresos vs bajas acumulado (últimos 12 meses)
+        ingresos_bajas_cum_week_labels=df_semana_cum["SemanaLabel"].astype(str).tolist(),
         ingresos_bajas_cum_ingresos=df_semana_cum["Ingresos acumulados"].astype(int).tolist(),
         ingresos_bajas_cum_bajas=df_semana_cum["Bajas acumuladas"].astype(int).tolist(),
+        ingresos_bajas_cum_week_month_numbers=week_cum_month_nums,
+        historico_years=historico_years,
+        historico_year_selected=historico_year_selected,
+        historico_periodo_text=historico_periodo_text,
         # Leads por reclutador
         leads_labels=etiquetas_leads,
         leads_por_reclutador=leads_por_reclutador,
@@ -1167,7 +1269,6 @@ def index():
         tabla_motivos_baja_rows=tabla_motivos_baja_rows,
         tabla_motivos_baja_columns=tabla_motivos_baja_columns,
         # Antigüedad promedio de bajas
-        antiguedad_bajas_year=int(YEAR),
         antiguedad_bajas_labels=antiguedad_bajas_labels,
         antiguedad_bajas_values=antiguedad_bajas_values,
         # Filtro campaña
