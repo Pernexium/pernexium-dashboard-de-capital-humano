@@ -1291,15 +1291,15 @@ def index():
         campania_seleccionada=campania_seleccionada,
     )
 
-@app.errorhandler(500)
-def handle_500(e):
-    return render_template("error_page.html"), 500
+#@app.errorhandler(500)
+#def handle_500(e):
+#    return render_template("error_page.html"), 500
 
-@app.errorhandler(Exception)
-def handle_exception(e):
-    if isinstance(e, HTTPException):
-        return e
-    return render_template("error_page.html"), 500
+#@app.errorhandler(Exception)
+#def handle_exception(e):
+#    if isinstance(e, HTTPException):
+#        return e
+#    return render_template("error_page.html"), 500
 
 ######################################### EJECUTADOR #############################################
 
