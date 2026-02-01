@@ -130,6 +130,27 @@ def limpiar_nombre(nombre: str) -> str:
     nombre = re.sub(r"\s+", " ", nombre).strip()
     return nombre
 
+def parse_fecha_mixta(s: pd.Series) -> pd.Series:
+    s = (
+        s.astype(str)
+         .str.strip()
+         .replace({"-": None, "": None, "nan": None, "NaN": None, "None": None})
+    )
+
+    d1 = pd.to_datetime(s, format="%d/%m/%Y", errors="coerce")
+
+    mask = d1.isna()
+    if mask.any():
+        d2 = pd.to_datetime(s[mask], format="%d/%m/%Y %H:%M:%S", errors="coerce")
+        d1.loc[mask] = d2
+
+    mask = d1.isna()
+    if mask.any():
+        d3 = pd.to_datetime(s[mask], dayfirst=True, errors="coerce")
+        d1.loc[mask] = d3
+
+    return d1
+
 def get_data_sheets():
     if not SHEET_ID_2:
         raise RuntimeError("SHEET_ID_2 no está definido en las variables de entorno.")
@@ -512,11 +533,8 @@ def index():
 
         # Fecha ingreso / entrevista / capacitación
         if "fecha_de_ingreso" in data_reclutamiento.columns:
-            data_reclutamiento["fecha_de_ingreso"] = pd.to_datetime(
-                data_reclutamiento["fecha_de_ingreso"], errors="coerce"
-            )
-            data_reclutamiento["fecha_de_ingreso"] = data_reclutamiento["fecha_de_ingreso"].apply(
-                lambda x: np.nan if x == '-' else x
+            data_reclutamiento["fecha_de_ingreso"] = parse_fecha_mixta(
+                data_reclutamiento["fecha_de_ingreso"]
             )
 
         if "fecha_de_entrevista" in data_reclutamiento.columns:
@@ -525,11 +543,8 @@ def index():
             )
 
         if "fecha_de_capacitacion" in data_reclutamiento.columns:
-            data_reclutamiento["fecha_de_capacitacion"] = pd.to_datetime(
-                data_reclutamiento["fecha_de_capacitacion"], errors="coerce"
-            )
-            data_reclutamiento["fecha_de_capacitacion"] = data_reclutamiento["fecha_de_capacitacion"].apply(
-                lambda x: np.nan if x == '-' else x
+            data_reclutamiento["fecha_de_capacitacion"] = parse_fecha_mixta(
+                data_reclutamiento["fecha_de_capacitacion"]
             )
 
         # Variables sintéticas
