@@ -58,6 +58,8 @@
       gap: 0.75rem; 
       position: relative;
       overflow: hidden;
+      height: 100%;
+      min-height: 0;
     }
     .funnel-card::before {
       content: "";
@@ -73,8 +75,8 @@
     }
     .funnel-stage {
       position: relative;
-      height: 32px;        
-      margin: 4px 0;      
+      height: 44px;
+      margin: 6px 0;      
       border-radius: 9999px;
       display: flex;
       align-items: center;
@@ -124,8 +126,9 @@
       flex: 1;
       display: flex;
       flex-direction: column;
-      justify-content: center;
-    }
+      justify-content: space-between;
+          min-height: 0;
+}
     .funnel-badge {
       font-size: 0.68rem;
       text-transform: uppercase;
@@ -147,14 +150,32 @@
       color: #64748b;
       white-space: nowrap;
       font-size: 0.65rem;
-      height: 32px;       
-      margin: 4px 0;      
+      height: 44px;
+      margin: 6px 0;      
     }
     .funnel-legend-color {
       width: 0.55rem;
       height: 0.55rem;
       border-radius: 9999px;
       border: 1px solid rgba(15,23,42,0.10);
+    }
+
+    /* Funnel (modal) más compacto */
+    #funnel-detail-container .funnel-card {
+      padding: 0.95rem 1.15rem;
+      height: auto;
+    }
+    #funnel-detail-container .funnel-stage {
+      height: 26px;
+      font-size: 0.66rem;
+    }
+    #funnel-detail-container .funnel-legend-item {
+      height: 26px;
+      font-size: 0.62rem;
+    }
+    #funnel-detail-container .funnel-pyramid-wrapper {
+      justify-content: flex-start;
+      padding-top: 0.25rem;
     }
     .coverage-chart-container {
       position: relative;
@@ -488,7 +509,7 @@
     </div>
      <!-- ========== FUNNEL DE RECLUTAMIENTO ========== -->
     <section class="mt-8 flex flex-wrap gap-6">
-      <div class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)] border border-slate-200/80 p-6 w-full md:w-[520px] lg:w-[560px] xl:w-[600px]">
+      <div class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)] border border-slate-200/80 p-6 w-full md:w-[520px] lg:w-[560px] xl:w-[600px] flex flex-col">
         <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-4">
           <div class="space-y-1">
             <h2 class="text-lg md:text-xl font-semibold text-slate-900">
@@ -496,25 +517,16 @@
             </h2>
           </div>
           <div class="flex items-center gap-2 self-start lg:self-auto">
-            <div class="flex items-center gap-2">
-              <button
-                id="funnel-prev"
-                type="button"
-                class="flex items-center justify-center w-9 h-9 rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <i class="fas fa-chevron-left text-sm"></i>
-              </button>
-              <button
-                id="funnel-next"
-                type="button"
-                class="flex items-center justify-center w-9 h-9 rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <i class="fas fa-chevron-right text-sm"></i>
-              </button>
-            </div>
+            <button
+              id="btn-funnel-detalle"
+              type="button"
+              class="font-medium text-[15px] text-[#0c376c] hover:underline"
+            >
+              Ver detalle
+            </button>
           </div>
         </div>
-        <div id="funnels-container" class="mt-2 flex justify-start"></div>
+        <div id="funnels-container" class="mt-2 flex justify-start flex-1 min-h-0 w-full"></div>
         <div id="funnels-legend" class="funnel-legend mt-2 pt-1"></div>
       </div>
       <!-- COBERTURA POR CARTERA - GRÁFICA + BOTÓN DETALLE -->
@@ -789,6 +801,81 @@
       </div>
       <!-- FIN BLOQUE ALINEADO -->
 
+
+
+      <!-- MODAL DETALLE FUNNEL -->
+      <div
+        id="funnel-modal"
+        class="fixed inset-0 z-50 grid place-items-center bg-black/60 backdrop-blur-sm p-4 hidden"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div class="bg-white w-full max-w-3xl rounded-2xl shadow-2xl flex flex-col border border-gray-200">
+          <div class="flex items-center justify-between px-6 py-4 gradient-bg text-white rounded-t-2xl">
+            <div class="flex items-center gap-3">
+              <img src="{{ url_for('static', filename='logos/PXM isotipo 41.png') }}"
+                   alt="Pernexium Logo"
+                   class="h-8 w-auto select-none" />
+              <div class="flex flex-col">
+                <h3 class="text-lg font-semibold tracking-wide">Funnel de Reclutamiento</h3>
+              </div>
+            </div>
+            <button
+              id="funnel-modal-close"
+              class="text-2xl leading-none hover:scale-110 transition-transform"
+              type="button"
+            >
+              &times;
+            </button>
+          </div>
+
+          <div class="p-5 bg-slate-50/40 flex flex-col gap-4">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div class="inline-flex rounded-full border border-slate-200 bg-slate-100 text-xs p-0.5">
+                <button
+                  id="funnel-detail-toggle-mensual"
+                  type="button"
+                  class="px-3 py-1.5 rounded-full font-medium bg-[#0c376c] text-white shadow-sm"
+                >
+                  Mensual
+                </button>
+                <button
+                  id="funnel-detail-toggle-semanal"
+                  type="button"
+                  class="px-3 py-1.5 rounded-full font-medium text-slate-700 bg-slate-100"
+                >
+                  Semanal
+                </button>
+              </div>
+
+              <div class="relative">
+                <select
+                  id="funnel-detail-period"
+                  class="appearance-none bg-white border border-slate-200 text-slate-700 text-xs font-medium rounded-full pl-3 pr-8 py-2
+                         focus:outline-none focus:ring-2 focus:ring-[#0c376c]/20"
+                  title="Selecciona el periodo"
+                ></select>
+                <i class="fas fa-chevron-down pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-500"></i>
+              </div>
+            </div>
+
+            <div class="rounded-xl bg-white p-4 flex">
+              <div id="funnel-detail-container" class="w-full"></div>
+            </div>
+          </div>
+
+          <div class="px-6 py-3 border-t flex justify-end bg-white">
+            <button
+              id="funnel-modal-close-footer"
+              type="button"
+              class="inline-flex items-center gap-2 text-sm font-semibold text-[#0c376c] hover:underline"
+            >
+              <i class="fas fa-times-circle"></i>
+              Cerrar
+            </button>
+          </div>
+        </div>
+      </div>
 
       <!-- MODAL DETALLE COBERTURA -->
       <div
@@ -1143,11 +1230,22 @@ const btnPDF = document.getElementById('download-pdf');
         return label.charAt(0).toUpperCase() + label.slice(1);
       }
 
-      const funnelLabels = {{ funnel_labels|tojson }};       
-      const funnelDatasetsRaw = {{ funnel_datasets|tojson }}; 
-      const container = document.getElementById('funnels-container');
-      const prevBtn = document.getElementById('funnel-prev');
-      const nextBtn = document.getElementById('funnel-next');
+      const funnelLabels = {{ funnel_labels|tojson }};
+      const funnelDatasetsMonthly = {{ funnel_datasets|tojson }};
+      const funnelDatasetsWeekly = {{ funnel_datasets_weekly|tojson }};
+
+      const funnelMainContainer = document.getElementById('funnels-container');
+      const funnelDetailContainer = document.getElementById('funnel-detail-container');
+
+      const funnelOpenBtn = document.getElementById('btn-funnel-detalle');
+      const funnelModal = document.getElementById('funnel-modal');
+      const funnelModalClose = document.getElementById('funnel-modal-close');
+      const funnelModalCloseFooter = document.getElementById('funnel-modal-close-footer');
+
+      const funnelToggleMensual = document.getElementById('funnel-detail-toggle-mensual');
+      const funnelToggleSemanal = document.getElementById('funnel-detail-toggle-semanal');
+      const funnelPeriodSelect = document.getElementById('funnel-detail-period');
+
       const stageColors = [
         '#0c376c',
         '#1c5896',
@@ -1157,188 +1255,198 @@ const btnPDF = document.getElementById('download-pdf');
         '#7ad9c5'
       ];
 
-      if (container && funnelDatasetsRaw && funnelDatasetsRaw.length) {
-        const allDatasets = funnelDatasetsRaw || [];
+      function renderFunnelCard(targetEl, dataset, mode) {
+        if (!targetEl || !dataset) return;
 
-        // ---- helpers para forzar últimos 3 meses ----
-        function parseYearMonth(label) {
-          if (!label) return null;
-          const s = String(label).trim();
+        targetEl.innerHTML = '';
+        const values = dataset.data || [];
+        if (!values.length) return;
 
-          // YYYY-MM-DD...
-          let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-          if (m) return { year: +m[1], month: +m[2] };
+        const levelsCount = values.length;
+        const minWidth = 65;
+        const maxWidth = 100;
+        const step = levelsCount > 1 ? (maxWidth - minWidth) / (levelsCount - 1) : 0;
 
-          // YYYY-MM
-          m = /^(\d{4})-(\d{2})$/.exec(s);
-          if (m) return { year: +m[1], month: +m[2] };
+        const card = document.createElement('div');
+        card.className = 'funnel-card w-full h-full';
 
-          // "Ene 2025"
-          m = /^([A-Za-zÁÉÍÓÚáéíóúÑñ]{3})\s+(\d{4})$/.exec(s);
-          if (m) {
-            const map = { Ene:1, Feb:2, Mar:3, Abr:4, May:5, Jun:6, Jul:7, Ago:8, Sep:9, Oct:10, Nov:11, Dic:12 };
-            const mon = map[m[1]] || map[m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase()];
-            if (mon) return { year: +m[2], month: mon };
-          }
+        const header = document.createElement('div');
+        header.className = 'mb-1';
 
-          return null;
+        let title = dataset.label || '';
+        if (mode === 'mensual') {
+          const fullMonthRaw = getFullSpanishMonthLabel(title);
+          title = capitalizeFirst(fullMonthRaw);
         }
 
-        function ymKey(ym) {
-          return `${ym.year}-${String(ym.month).padStart(2, '0')}`;
-        }
+        header.innerHTML = `
+          <div class="w-full flex justify-center">
+            <p class="text-sm font-semibold text-slate-900">${title}</p>
+          </div>
+        `;
+        card.appendChild(header);
 
-        function lastMonthKeys(count, refDate = new Date()) {
-          const keys = [];
-          const d = new Date(refDate.getFullYear(), refDate.getMonth(), 1); // inicio de mes local
-          for (let i = count - 1; i >= 0; i--) {
-            const x = new Date(d.getFullYear(), d.getMonth() - i, 1);
-            keys.push(`${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`);
-          }
-          return keys; // orden: más viejo -> más nuevo
-        }
+        const bodyRow = document.createElement('div');
+        bodyRow.className = 'flex flex-col sm:flex-row sm:items-stretch gap-3 flex-1 min-h-0';
 
-        const desiredKeys = lastMonthKeys(3); // [mes-2, mes-1, mes-actual]
+        const legendCol = document.createElement('div');
+        legendCol.className = (targetEl && targetEl.id === 'funnel-detail-container')
+          ? 'funnel-legend-col flex flex-col justify-start mr-0 sm:mr-4 flex-none'
+          : 'funnel-legend-col flex flex-col justify-between mr-0 sm:mr-4 flex-none';
+        legendCol.style.minWidth = '170px';
 
-        // Indexa datasets que caen dentro de los 3 meses deseados
-        const dsByKey = new Map();
-        for (const ds of allDatasets) {
-          const ym = parseYearMonth(ds?.label);
-          if (!ym) continue;
-          const key = ymKey(ym);
-          if (desiredKeys.includes(key)) {
-            dsByKey.set(key, ds);
-          }
-        }
+        const pyramidWrapper = document.createElement('div');
+        pyramidWrapper.className = 'funnel-pyramid-wrapper';
 
-        // Arma SIEMPRE 3 datasets (si falta alguno, lo rellena con ceros)
-        const displayDatasets = desiredKeys.map((key) => {
-          const original = dsByKey.get(key);
-          if (original) {
-            return { ...original, _forcedLabel: key };
-          }
-          return {
-            label: key,
-            _forcedLabel: key,
-            data: Array.isArray(funnelLabels) ? Array(funnelLabels.length).fill(0) : [],
-            _placeholder: true
-          };
+        values.forEach((value, i) => {
+          const v = value || 0;
+          const width = maxWidth - i * step;
+          const stageColor = stageColors[i % stageColors.length];
+
+          const stage = document.createElement('div');
+          stage.className = 'funnel-stage';
+          stage.style.width = width + '%';
+          const baseMargin = (100 - width) / 2;
+          stage.style.marginLeft = baseMargin + '%';
+          stage.style.backgroundColor = stageColor;
+          stage.style.border = '1px solid ' + stageColor;
+
+          const valueEl = document.createElement('div');
+          valueEl.className = 'funnel-stage-value';
+          const conv = values[0] ? (v / values[0] * 100) : 0;
+          valueEl.textContent = `${v.toLocaleString('es-MX')} (${conv.toFixed(1)}%)`;
+          stage.appendChild(valueEl);
+
+          const centerText = document.createElement('span');
+          centerText.textContent = `${v.toLocaleString('es-MX')}`;
+          stage.appendChild(centerText);
+
+          pyramidWrapper.appendChild(stage);
+
+          const legendItem = document.createElement('div');
+          legendItem.className = 'funnel-legend-item';
+          const colorDot = document.createElement('span');
+          colorDot.className = 'funnel-legend-color';
+          colorDot.style.backgroundColor = stageColor;
+          const text = document.createElement('span');
+          text.textContent = funnelLabels[i] || `Etapa ${i + 1}`;
+          legendItem.appendChild(colorDot);
+          legendItem.appendChild(text);
+          legendCol.appendChild(legendItem);
         });
 
-        let currentFunnelIndex = displayDatasets.length ? displayDatasets.length - 1 : 0;
+        bodyRow.appendChild(legendCol);
+        bodyRow.appendChild(pyramidWrapper);
+        card.appendChild(bodyRow);
 
-
-        function updateNavButtons() {
-          if (!prevBtn || !nextBtn) return;
-          const onlyOne = displayDatasets.length <= 1;
-          prevBtn.disabled = onlyOne || currentFunnelIndex === 0;
-          nextBtn.disabled = onlyOne || currentFunnelIndex === displayDatasets.length - 1;
-        }
-
-        function renderFunnel() {
-          container.innerHTML = '';
-          if (!displayDatasets.length) return;
-          const dataset = displayDatasets[currentFunnelIndex];
-          const values = dataset.data || [];
-          if (!values.length) return;
-
-          const levelsCount = values.length;
-          const minWidth = 65;  
-          const maxWidth = 100;
-          const step = levelsCount > 1 ? (maxWidth - minWidth) / (levelsCount - 1) : 0;
-
-          const card = document.createElement('div');
-          card.className = 'funnel-card w-full';
-
-          const header = document.createElement('div');
-          header.className = 'mb-1 pl-[170px]';
-          const labelForTitle = dataset._forcedLabel || dataset.label;
-          const fullMonthRaw = getFullSpanishMonthLabel(labelForTitle);
-          const fullMonthLabel = capitalizeFirst(fullMonthRaw);
-          header.innerHTML = `
-            <div class="w-full flex justify-center">
-              <p class="text-sm font-semibold text-slate-900">${fullMonthLabel}</p>
-            </div>
-          `;
-          card.appendChild(header);
-
-          const bodyRow = document.createElement('div');
-          bodyRow.className = 'flex flex-col sm:flex-row sm:items-stretch gap-3';
-
-          const legendCol = document.createElement('div');
-          legendCol.className = 'flex flex-col mr-0 sm:mr-4 flex-none';
-          legendCol.style.minWidth = '170px';
-
-          const pyramidWrapper = document.createElement('div');
-          pyramidWrapper.className = 'funnel-pyramid-wrapper';
-
-          values.forEach((value, i) => {
-            const v = value || 0;
-            const width = maxWidth - i * step; 
-            const stageColor = stageColors[i % stageColors.length];
-
-            const stage = document.createElement('div');
-            stage.className = 'funnel-stage';
-            stage.style.width = width + '%';
-            const baseMargin = (100 - width) / 2;
-            stage.style.marginLeft = baseMargin + '%';
-            stage.style.backgroundColor = stageColor;
-            stage.style.border = '1px solid ' + stageColor;
-
-            const valueEl = document.createElement('div');
-            valueEl.className = 'funnel-stage-value';
-            const conv = values[0] ? (v / values[0] * 100) : 0;
-            valueEl.textContent = `${v.toLocaleString('es-MX')} (${conv.toFixed(1)}%)`;
-            stage.appendChild(valueEl);
-
-            const centerText = document.createElement('span');
-            centerText.textContent = `${v.toLocaleString('es-MX')}`;
-            stage.appendChild(centerText);
-
-            pyramidWrapper.appendChild(stage);
-
-            const legendItem = document.createElement('div');
-            legendItem.className = 'funnel-legend-item';
-            const colorDot = document.createElement('span');
-            colorDot.className = 'funnel-legend-color';
-            colorDot.style.backgroundColor = stageColor;
-            const text = document.createElement('span');
-            text.textContent = funnelLabels[i] || `Etapa ${i+1}`;
-            legendItem.appendChild(colorDot);
-            legendItem.appendChild(text);
-            legendCol.appendChild(legendItem);
-          });
-
-          bodyRow.appendChild(legendCol);
-          bodyRow.appendChild(pyramidWrapper);
-          card.appendChild(bodyRow);
-          container.appendChild(card);
-
-          updateNavButtons();
-        }
-
-        if (prevBtn) {
-          prevBtn.addEventListener('click', () => {
-            if (currentFunnelIndex > 0) {
-              currentFunnelIndex -= 1;
-              renderFunnel();
-            }
-          });
-        }
-        if (nextBtn) {
-          nextBtn.addEventListener('click', () => {
-            if (currentFunnelIndex < displayDatasets.length - 1) {
-              currentFunnelIndex += 1;
-              renderFunnel();
-            }
-          });
-        }
-
-        renderFunnel();
-      } else {
-        if (prevBtn) prevBtn.disabled = true;
-        if (nextBtn) nextBtn.disabled = true;
+        targetEl.appendChild(card);
       }
+
+      // Render inicial en la tarjeta (mensual, último mes disponible)
+      if (funnelMainContainer && Array.isArray(funnelDatasetsMonthly) && funnelDatasetsMonthly.length) {
+        renderFunnelCard(
+          funnelMainContainer,
+          funnelDatasetsMonthly[funnelDatasetsMonthly.length - 1],
+          'mensual'
+        );
+      }
+
+      // ===== Modal Funnel (Ver detalle) =====
+      let funnelMode = 'mensual';
+
+      function setToggleUI() {
+        if (!funnelToggleMensual || !funnelToggleSemanal) return;
+
+        if (funnelMode === 'mensual') {
+          funnelToggleMensual.className = 'px-3 py-1.5 rounded-full font-medium bg-[#0c376c] text-white shadow-sm';
+          funnelToggleSemanal.className = 'px-3 py-1.5 rounded-full font-medium text-slate-700 bg-slate-100';
+        } else {
+          funnelToggleMensual.className = 'px-3 py-1.5 rounded-full font-medium text-slate-700 bg-slate-100';
+          funnelToggleSemanal.className = 'px-3 py-1.5 rounded-full font-medium bg-[#0c376c] text-white shadow-sm';
+        }
+      }
+
+      function getActiveDatasets() {
+        return funnelMode === 'mensual' ? (funnelDatasetsMonthly || []) : (funnelDatasetsWeekly || []);
+      }
+
+      function populatePeriodSelect() {
+        if (!funnelPeriodSelect) return;
+        const ds = getActiveDatasets();
+        funnelPeriodSelect.innerHTML = '';
+
+        ds.forEach((d, idx) => {
+          const opt = document.createElement('option');
+          opt.value = String(idx);
+          opt.textContent = d.label || `Periodo ${idx + 1}`;
+          funnelPeriodSelect.appendChild(opt);
+        });
+
+        // Selecciona el más reciente por default
+        if (ds.length) {
+          funnelPeriodSelect.value = String(ds.length - 1);
+        }
+      }
+
+      function renderModalFunnel() {
+        const ds = getActiveDatasets();
+        const idx = funnelPeriodSelect ? parseInt(funnelPeriodSelect.value || '0', 10) : 0;
+        const dataset = ds[Math.max(0, Math.min(idx, ds.length - 1))];
+        renderFunnelCard(funnelDetailContainer, dataset, funnelMode);
+      }
+
+      function openFunnelModal() {
+        if (!funnelModal) return;
+        funnelMode = 'mensual';
+        setToggleUI();
+        populatePeriodSelect();
+        renderModalFunnel();
+
+        funnelModal.classList.remove('hidden');
+      }
+
+      function closeFunnelModal() {
+        if (!funnelModal) return;
+        funnelModal.classList.add('hidden');
+      }
+
+      if (funnelOpenBtn && funnelModal) {
+        funnelOpenBtn.addEventListener('click', openFunnelModal);
+      }
+      if (funnelModalClose) {
+        funnelModalClose.addEventListener('click', closeFunnelModal);
+      }
+      if (funnelModalCloseFooter) {
+        funnelModalCloseFooter.addEventListener('click', closeFunnelModal);
+      }
+      if (funnelModal) {
+        funnelModal.addEventListener('click', (e) => {
+          if (e.target === funnelModal) closeFunnelModal();
+        });
+      }
+
+      if (funnelToggleMensual) {
+        funnelToggleMensual.addEventListener('click', () => {
+          funnelMode = 'mensual';
+          setToggleUI();
+          populatePeriodSelect();
+          renderModalFunnel();
+        });
+      }
+      if (funnelToggleSemanal) {
+        funnelToggleSemanal.addEventListener('click', () => {
+          funnelMode = 'semanal';
+          setToggleUI();
+          populatePeriodSelect();
+          renderModalFunnel();
+        });
+      }
+      if (funnelPeriodSelect) {
+        funnelPeriodSelect.addEventListener('change', renderModalFunnel);
+      }
+
+
+
 
       // === Gráfica de Cobertura de Cartera (Barras) ===
       const coverageLabels      = {{ cobertura_labels      | tojson }};
@@ -2712,6 +2820,12 @@ const valueLabelPluginIB = {
         const pagosMensualesLabelsRaw = {{ pagos_mensuales_labels | tojson }};
         const pagosMensualesValues    = {{ pagos_mensuales_values | tojson }};
 
+        // Ingresos (reutilizados del gráfico "Ingresos vs Bajas") para eje derecho
+        const ingresosPautaWeekLabels  = {{ ingresos_pauta_week_labels | tojson }};
+        const ingresosPautaWeekValues  = {{ ingresos_pauta_week_values | tojson }};
+        const ingresosPautaMonthLabels = {{ ingresos_pauta_month_labels | tojson }};
+        const ingresosPautaMonthValues = {{ ingresos_pauta_month_values | tojson }};
+
         const btnPagosSemanal = document.getElementById('pagos-toggle-semanal');
         const btnPagosMensual = document.getElementById('pagos-toggle-mensual');
 
@@ -2763,6 +2877,20 @@ const valueLabelPluginIB = {
         const pagosWeeklyLabels  = pagosSemanalesLabelsRaw.map(prettyDateLabel);
         const pagosMonthlyLabels = pagosMensualesLabelsRaw.map(prettyMonthYYYYMM);
 
+        // Alinear ingresos a las mismas etiquetas de inversión (semanal ISO YYYY-MM-DD / mensual YYYY-MM)
+        const ingresosWeekMap = {};
+        (ingresosPautaWeekLabels || []).forEach((l, i) => {
+          ingresosWeekMap[String(l)] = (ingresosPautaWeekValues || [])[i] ?? 0;
+        });
+
+        const ingresosMonthMap = {};
+        (ingresosPautaMonthLabels || []).forEach((l, i) => {
+          ingresosMonthMap[String(l)] = (ingresosPautaMonthValues || [])[i] ?? 0;
+        });
+
+        const ingresosSemanalesValuesAligned = (pagosSemanalesLabelsRaw || []).map(l => ingresosWeekMap[String(l)] ?? 0);
+        const ingresosMensualesValuesAligned = (pagosMensualesLabelsRaw || []).map(l => ingresosMonthMap[String(l)] ?? 0);
+
         // MODO INICIAL: MENSUAL
         let pagosMode = 'mensual';
 
@@ -2770,13 +2898,15 @@ const valueLabelPluginIB = {
           if (mode === 'mensual') {
             return {
               labels: pagosMonthlyLabels,
-              data: pagosMensualesValues
+              data: pagosMensualesValues,
+              ingresos: ingresosMensualesValuesAligned
             };
           }
           // semanal
           return {
             labels: pagosWeeklyLabels,
-            data: pagosSemanalesValues
+            data: pagosSemanalesValues,
+            ingresos: ingresosSemanalesValuesAligned
           };
         }
 
@@ -2838,6 +2968,10 @@ const valueLabelPluginIB = {
                 },
                 label: function (ctx) {
                   const value = ctx.parsed.y || 0;
+                  const dsLabel = (ctx.dataset && ctx.dataset.label) ? ctx.dataset.label : '';
+                  if (dsLabel === 'Ingresos') {
+                    return ' Ingresos: ' + (value ?? 0);
+                  }
                   return ' Monto pagado: ' + formatCurrencyMXN(value);
                 }
               }
@@ -2864,6 +2998,27 @@ const valueLabelPluginIB = {
                 color: 'rgba(148,163,184,0.2)',
                 drawBorder: false
               }
+            },
+            y1: {
+              beginAtZero: true,
+              position: 'right',
+              ticks: {
+                precision: 0,
+                color: '#64748b'
+              },
+              title: {
+                display: true,
+                text: 'Ingresos',
+                color: '#0f172a',
+                font: {
+                  size: 11,
+                  weight: '600'
+                }
+              },
+              grid: {
+                drawOnChartArea: false,
+                drawBorder: false
+              }
             }
           }
         };
@@ -2879,6 +3034,17 @@ const valueLabelPluginIB = {
                 backgroundColor: 'rgba(12,55,108,0.10)',
                 tension: 0.25,
                 fill: true,
+                pointRadius: 3,
+                pointHoverRadius: 4
+              },
+              {
+                label: 'Ingresos',
+                data: cfg.ingresos,
+                yAxisID: 'y1',
+                borderColor: '#16a34a',
+                backgroundColor: 'rgba(22,163,74,0.0)',
+                tension: 0.25,
+                fill: false,
                 pointRadius: 3,
                 pointHoverRadius: 4
               }
