@@ -31,6 +31,7 @@ load_dotenv()
 S3_SA_KEY      = os.getenv("S3_SA_KEY")
 SHEET_ID       = os.getenv("SHEET_ID")     
 SHEET_ID_2     = os.getenv("SHEET_ID_2")   
+INGRESOS_OPERACION_SHEET_ID = os.getenv("INGRESOS_OPERACION_SHEET_ID")
 SCOPES         = json.loads(os.getenv("SCOPES")) if os.getenv("SCOPES") else []
 S3_BUCKET      = os.getenv("S3_BUCKET")
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
@@ -247,19 +248,30 @@ app = Flask(__name__)
 def index():
     
     ################################# BASES DE DATOS ##################################
-    
     campania_param = request.args.get("campania", default="", type=str).strip()
     campania_seleccionada = campania_param or None
+
+    # Fecha/hora actual en México (reutilizada en todo el dashboard)
+    mx_now = pd.Timestamp.now(tz=pytz.timezone("America/Mexico_City")).tz_localize(None)
+
     # Filtro para el gráfico histórico (acumulado anual): por defecto el año actual
-    _mx_today = dt.datetime.now(pytz.timezone("America/Mexico_City")).date()
+    _mx_today = mx_now.date()
     _current_year = int(_mx_today.year)
-    _historico_year_raw = request.args.get("historico_year", default=str(_current_year), type=str).strip()
+
+    _historico_year_raw = request.args.get(
+        "historico_year",
+        default=str(_current_year),
+        type=str
+    ).strip()
+
     try:
         historico_year_selected = int(_historico_year_raw) if _historico_year_raw else _current_year
     except Exception:
         historico_year_selected = _current_year
+
     if historico_year_selected > _current_year:
         historico_year_selected = _current_year
+
 
 
     service = build_sheets_service()
@@ -598,28 +610,46 @@ def index():
                     continue
                 costo_lead = df_tmp["monto_pagado"].iloc[0] / len(df_tmp)
                 data_reclutamiento.loc[data_reclutamiento["folio"] == folio, 'monto_pagado_distribuido'] = costo_lead
-
         # Ordenar
         if "fecha_publicacion" in data_reclutamiento.columns:
-            data_reclutamiento = data_reclutamiento.sort_values(by='fecha_publicacion')
+            data_reclutamiento = data_reclutamiento.sort_values(by="fecha_publicacion")
 
-        # Funnel mensual
+        # Fecha de entrevista (para contar LEADs en Facebook por mes)
+        # Se usa la columna "entrevista" si existe; si no, se intenta con "fecha_de_entrevista".
+        if "entrevista" in data_reclutamiento.columns:
+            data_reclutamiento["entrevista_dt"] = pd.to_datetime(
+                data_reclutamiento["entrevista"], errors="coerce"
+            )
+        elif "fecha_de_entrevista" in data_reclutamiento.columns:
+            data_reclutamiento["entrevista_dt"] = parse_fecha_mixta(
+                data_reclutamiento["fecha_de_entrevista"]
+            )
+        else:
+            data_reclutamiento["entrevista_dt"] = pd.NaT
+
+        # Fecha de ingreso (para funnel semanal)
+        if "fecha_de_ingreso" in data_reclutamiento.columns:
+            data_reclutamiento["ingreso_dt"] = parse_fecha_mixta(
+                data_reclutamiento["fecha_de_ingreso"]
+            )
+        else:
+            data_reclutamiento["ingreso_dt"] = pd.NaT
+
+        # Funnel mensual (base por fecha_publicacion para "Asistieron a Entrevista")
         if "fecha_publicacion" in data_reclutamiento.columns:
             df_funnel_mes = (
                 data_reclutamiento
-                .dropna(subset=['fecha_publicacion'])
-                .groupby(pd.Grouper(key='fecha_publicacion', freq='MS'))
+                .dropna(subset=["fecha_publicacion"])
+                .groupby(pd.Grouper(key="fecha_publicacion", freq="MS"))
                 .agg({
-                    'fecha_publicacion': 'count',
-                    'bin_agenda_entrevista': 'sum',
-                    'bin_asiste_entrevista': 'sum',
-                    'bin_aceptado': 'sum',
-                    'bin_ingreso': 'sum',
-                    'monto_pagado_distribuido': 'sum'
+                    "fecha_publicacion": "count",
+                    "bin_asiste_entrevista": "sum",
+                    "bin_ingreso": "sum",
+                    "monto_pagado_distribuido": "sum",
                 })
-                .rename(columns={'fecha_publicacion': 'leads_generados'})
+                .rename(columns={"fecha_publicacion": "leads_generados"})
                 .reset_index()
-                .sort_values('fecha_publicacion')
+                .sort_values("fecha_publicacion")
             )
         else:
             df_funnel_mes = pd.DataFrame()
@@ -627,31 +657,217 @@ def index():
         data_reclutamiento = pd.DataFrame()
         df_funnel_mes      = pd.DataFrame()
 
-    df_funnel_ultimos_3 = df_funnel_mes.tail(3)
+    # --- Funnel: últimos 3 meses SIEMPRE (mes-2, mes-1, mes actual) ---
+    current_month_start = pd.Timestamp(int(mx_now.year), int(mx_now.month), 1)
+    months_for_funnel = [
+        current_month_start - pd.DateOffset(months=2),
+        current_month_start - pd.DateOffset(months=1),
+        current_month_start,
+    ]
+
+    df_funnel_idx = (
+        df_funnel_mes.set_index("fecha_publicacion")
+        if not df_funnel_mes.empty and "fecha_publicacion" in df_funnel_mes.columns
+        else pd.DataFrame()
+    )
+
+    entrevista_month = (
+        data_reclutamiento["entrevista_dt"].dt.to_period("M").dt.to_timestamp()
+        if (not data_reclutamiento.empty and "entrevista_dt" in data_reclutamiento.columns)
+        else pd.Series([], dtype="datetime64[ns]")
+    )
 
     funnel_labels = [
         "Leads en Facebook",
-        "Agenda Entrevista",
         "Asistieron a Entrevista",
-        "Aceptados",
         "Ingresos a Operación",
     ]
+
+
+    def _get_ingresos_operacion_mes(_service, _dt_mes):
+        try:
+            sheet_name = f"{mapa_meses[int(_dt_mes.month)]} {str(int(_dt_mes.year))[-2:]}"
+            safe_sheet = sheet_name.replace("'", "''")
+            rng = f"'{safe_sheet}'!C6"
+            resp = (_service.spreadsheets()
+                            .values()
+                            .get(spreadsheetId=INGRESOS_OPERACION_SHEET_ID, range=rng)
+                            .execute())
+            vals = resp.get("values", [])
+            if not vals or not vals[0]:
+                return 0
+            raw = str(vals[0][0]).strip()
+            raw = raw.replace(",", "")
+            raw = re.sub(r"[^\d\.\-]", "", raw)
+            if not raw or raw == "-":
+                return 0
+            return int(float(raw))
+        except Exception:
+            return 0
+
+
+    def _get_ingresos_operacion_week_counts_current_month(_service, _start, _end):
+        """
+        Lee la hoja del mes actual (mismo nombre que usa el dashboard: 'MES YY') del
+        spreadsheet INGRESOS_OPERACION_SHEET_ID y devuelve conteos por semana (lunes)
+        para registros donde:
+          - STATUS (columna P, desde P12 hacia abajo) == 'INGRESO'
+          - FECHA DE INGRESO/SALIDA (columna Q, desde Q12 hacia abajo) define la semana
+        """
+        if not INGRESOS_OPERACION_SHEET_ID:
+            return pd.Series(dtype=int)
+
+        try:
+            sheet_name = f"{mapa_meses[int(mx_now.month)]} {str(int(mx_now.year))[-2:]}"
+            safe_sheet = sheet_name.replace("'", "''")
+            # P = STATUS, Q = FECHA DE INGRESO/SALIDA
+            rng = f"'{safe_sheet}'!P12:Q"
+
+            resp = (_service.spreadsheets()
+                            .values()
+                            .get(spreadsheetId=INGRESOS_OPERACION_SHEET_ID, range=rng)
+                            .execute())
+            rows = resp.get("values", []) or []
+            if not rows:
+                return pd.Series(dtype=int)
+
+            status_vals = []
+            fecha_vals = []
+            for r in rows:
+                status_vals.append(r[0] if len(r) > 0 else None)
+                fecha_vals.append(r[1] if len(r) > 1 else None)
+
+            status_s = (
+                pd.Series(status_vals, dtype="object")
+                  .astype(str)
+                  .str.strip()
+                  .str.upper()
+            )
+            fecha_dt = parse_fecha_mixta(pd.Series(fecha_vals, dtype="object"))
+
+            mask = status_s.eq("INGRESO") & fecha_dt.notna()
+            d = fecha_dt[mask]
+            if d.empty:
+                return pd.Series(dtype=int)
+
+            start = pd.to_datetime(_start, errors="coerce")
+            end   = pd.to_datetime(_end, errors="coerce")
+            if pd.notna(start):
+                d = d[d >= start]
+            if pd.notna(end):
+                d = d[d <= end]
+
+            if d.empty:
+                return pd.Series(dtype=int)
+
+            week_start = d.dt.normalize() - pd.to_timedelta(d.dt.weekday, unit="D")
+            return week_start.value_counts().sort_index().astype(int)
+        except Exception:
+            return pd.Series(dtype=int)
+
     funnel_datasets = []
-    for _, row in df_funnel_ultimos_3.iterrows():
-        dt_mes    = row['fecha_publicacion']
+    for dt_mes in months_for_funnel:
         mes_label = f"{MESES_ES_CORTO[dt_mes.month - 1]} {dt_mes.year}"
+
+        leads_fb_mes = int((entrevista_month == dt_mes).sum()) if not entrevista_month.empty else 0
+
+        asiste_mes = 0
+        if (
+            not df_funnel_idx.empty
+            and dt_mes in df_funnel_idx.index
+            and "bin_asiste_entrevista" in df_funnel_idx.columns
+        ):
+            try:
+                asiste_mes = int(df_funnel_idx.at[dt_mes, "bin_asiste_entrevista"])
+            except Exception:
+                asiste_mes = 0
+
+        # Por ahora se deja en 0; después se conectará el cálculo real.
+        ingresos_operacion_mes = _get_ingresos_operacion_mes(service, dt_mes)
+
         funnel_datasets.append({
             "label": mes_label,
             "data": [
-                int(row['leads_generados']),
-                int(row['bin_agenda_entrevista']),
-                int(row['bin_asiste_entrevista']),
-                int(row['bin_aceptado']),
-                int(row['bin_ingreso']),
+                leads_fb_mes,
+                asiste_mes,
+                ingresos_operacion_mes,
             ],
         })
 
-    ################################ COBERTURA DE CARTERA #####################################
+    
+    # Funnel semanal (últimas 8 semanas, inicio lunes)
+    funnel_datasets_weekly = []
+    try:
+        current_week_start = (pd.Timestamp(mx_now.date()) - pd.Timedelta(days=int(mx_now.weekday()))).normalize()
+    except Exception:
+        current_week_start = pd.Timestamp.now().normalize() - pd.Timedelta(days=int(pd.Timestamp.now().weekday()))
+
+    weeks_for_funnel = [current_week_start - pd.DateOffset(weeks=i) for i in range(7, -1, -1)]  # antiguo -> reciente
+
+    # Ingresos a Operación (desde INGRESOS_OPERACION_SHEET_ID -> hoja del mes actual)
+    wk_range_start = weeks_for_funnel[0]
+    wk_range_end   = (weeks_for_funnel[-1] + pd.Timedelta(days=6)).normalize()
+    _ing_wk_series = _get_ingresos_operacion_week_counts_current_month(service, wk_range_start, wk_range_end)
+    ingresos_operacion_week_dict = (
+        {pd.to_datetime(k).normalize(): int(v) for k, v in _ing_wk_series.to_dict().items()}
+        if isinstance(_ing_wk_series, pd.Series) and not _ing_wk_series.empty
+        else {}
+    )
+
+
+    if not data_reclutamiento.empty:
+        entrevista_week = (
+            data_reclutamiento["entrevista_dt"].dt.normalize()
+            - pd.to_timedelta(data_reclutamiento["entrevista_dt"].dt.weekday, unit="D")
+            if "entrevista_dt" in data_reclutamiento.columns
+            else pd.Series([], dtype="datetime64[ns]")
+        )
+        ingreso_week = (
+            data_reclutamiento["ingreso_dt"].dt.normalize()
+            - pd.to_timedelta(data_reclutamiento["ingreso_dt"].dt.weekday, unit="D")
+            if "ingreso_dt" in data_reclutamiento.columns
+            else pd.Series([], dtype="datetime64[ns]")
+        )
+
+        for wk in weeks_for_funnel:
+            iso = wk.isocalendar()
+            wk_end = (wk + pd.Timedelta(days=6)).normalize()
+            wk_label = (
+                f"Semana {int(iso.week):02d} {int(iso.year)} - "
+                f"{wk.strftime('%d/%m/%Y')} a {wk_end.strftime('%d/%m/%Y')}"
+            )
+
+            leads_fb_wk = int((entrevista_week == wk).sum()) if len(entrevista_week) else 0
+            asiste_wk = 0
+            if "bin_asiste_entrevista" in data_reclutamiento.columns and len(entrevista_week):
+                try:
+                    asiste_wk = int(data_reclutamiento.loc[entrevista_week == wk, "bin_asiste_entrevista"].sum())
+                except Exception:
+                    asiste_wk = 0
+
+            ingresos_wk = int(ingresos_operacion_week_dict.get(wk.normalize(), 0))
+
+            funnel_datasets_weekly.append({
+                "label": wk_label,
+                "data": [leads_fb_wk, asiste_wk, ingresos_wk],
+            })
+    else:
+        # Si no hay datos, aún construye semanas vacías para el selector del modal
+        for wk in weeks_for_funnel:
+            iso = wk.isocalendar()
+            wk_end = (wk + pd.Timedelta(days=6)).normalize()
+            wk_label = (
+                f"Semana {int(iso.week):02d} {int(iso.year)} - "
+                f"{wk.strftime('%d/%m/%Y')} a {wk_end.strftime('%d/%m/%Y')}"
+            )
+            funnel_datasets_weekly.append({
+                "label": wk_label,
+                "data": [0, 0, int(ingresos_operacion_week_dict.get(wk.normalize(), 0))],
+            })
+
+
+################################ COBERTURA DE CARTERA
+ #####################################
 
     df_act = df_plantilla_activa.copy()
     df_act['FECHA_INGRESO'] = pd.to_datetime(df_act['FECHA DE INGRESO'],dayfirst=True,errors='coerce')
@@ -761,7 +977,6 @@ def index():
 
     # Ventana: últimos 12 meses **incluyendo el mes actual** (mes actual a la fecha)
     # Ej.: si hoy es 2026-01-01, el rango queda 2025-02-01 .. 2026-01-01 (y los meses: feb-2025 .. ene-2026)
-    mx_now = pd.Timestamp.now(tz=pytz.timezone("America/Mexico_City")).tz_localize(None)
     _month_start = mx_now.normalize().replace(day=1)
     # Nota: usamos fin del día de hoy para no perder registros con hora.
     RANGE_END   = (mx_now.normalize() + pd.Timedelta(days=1)) - pd.Timedelta(microseconds=1)
@@ -847,6 +1062,11 @@ def index():
 
     week_index      = ingresos_week_counts.index
     week_labels     = [pd.to_datetime(w).strftime("%d/%m/%y") for w in week_index]
+    # Etiquetas ISO para reutilizar en otros gráficos (ej. inversión en pauta)
+    week_labels_iso = [pd.to_datetime(w).strftime("%Y-%m-%d") for w in week_index]
+    ingresos_pauta_week_labels = week_labels_iso
+    ingresos_pauta_week_values = [int(x) for x in ingresos_week_counts.values]
+
     week_month_nums = [int(pd.to_datetime(w).month) for w in week_index]
 
     df_semana = pd.DataFrame({
@@ -858,6 +1078,11 @@ def index():
     # Mensual (últimos 12 meses)
     ingresos_month_counts = _monthly_counts_from_dates(ingresos_todos, months_12, RANGE_START, RANGE_END)
     bajas_month_counts    = _monthly_counts_from_dates(bajas_baja_dates_validas, months_12, RANGE_START, RANGE_END)
+
+    # Etiquetas YYYY-MM para reutilizar en otros gráficos (ej. inversión en pauta)
+    ingresos_pauta_month_labels = [f"{m.year}-{m.month:02d}" for m in months_12]
+    ingresos_pauta_month_values = [int(x) for x in ingresos_month_counts.values]
+
 
     meses_labels_12 = [f"{MESES_ES_CORTO[m.month - 1]} {m.year}" for m in months_12]
     ingresos_mes    = ingresos_month_counts.tolist()
@@ -1235,9 +1460,10 @@ def index():
         contratos_estructura=contratos_estructura,
         contratos_operacion=contratos_operacion,
         contratos_por_area=contratos_por_area_dict,
-        # Funnel últimos 3 meses
+        # Funnel (mensual + semanal)
         funnel_labels=funnel_labels,
         funnel_datasets=funnel_datasets,
+        funnel_datasets_weekly=funnel_datasets_weekly,
         # Cobertura cartera
         cobertura_labels=cobertura_labels,
         cobertura_values=cobertura_values,
@@ -1278,6 +1504,10 @@ def index():
         pagos_semanales_values=pagos_semanales_values,
         pagos_mensuales_labels=pagos_mensuales_labels,
         pagos_mensuales_values=pagos_mensuales_values,
+        ingresos_pauta_week_labels=ingresos_pauta_week_labels,
+        ingresos_pauta_week_values=ingresos_pauta_week_values,
+        ingresos_pauta_month_labels=ingresos_pauta_month_labels,
+        ingresos_pauta_month_values=ingresos_pauta_month_values,
         # Motivos de bajas
         motivos_baja_labels=motivos_baja_labels,
         motivos_baja_values=motivos_baja_values,
@@ -1291,17 +1521,17 @@ def index():
         campania_seleccionada=campania_seleccionada,
     )
 
-@app.errorhandler(500)
-def handle_500(e):
-    return render_template("error_page.html"), 500
+# @app.errorhandler(500)
+# def handle_500(e):
+#     return render_template("error_page.html"), 500
 
-@app.errorhandler(Exception)
-def handle_exception(e):
-    if isinstance(e, HTTPException):
-        return e
-    return render_template("error_page.html"), 500
+# @app.errorhandler(Exception)
+# def handle_exception(e):
+#     if isinstance(e, HTTPException):
+#         return e
+#     return render_template("error_page.html"), 500
 
 ######################################### EJECUTADOR #############################################
 
 if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5000)
