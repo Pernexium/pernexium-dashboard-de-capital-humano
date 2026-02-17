@@ -680,8 +680,10 @@ def index():
     funnel_labels = [
         "Leads en Facebook",
         "Asistieron a Entrevista",
-        "Ingresos a Operación",
+        "Ingresos en Capacitación",   
+        "Ingresos a Operación",    
     ]
+
 
 
     def _get_ingresos_operacion_mes(_service, _dt_mes):
@@ -704,6 +706,29 @@ def index():
             return int(float(raw))
         except Exception:
             return 0
+
+    def _get_ingresos_capacitacion_mes(_service, _dt_mes):
+        # MISMA lógica que _get_ingresos_operacion_mes, pero leyendo C5
+        try:
+            sheet_name = f"{mapa_meses[int(_dt_mes.month)]} {str(int(_dt_mes.year))[-2:]}"
+            safe_sheet = sheet_name.replace("'", "''")
+            rng = f"'{safe_sheet}'!C5"   # <-- C5
+            resp = (_service.spreadsheets()
+                            .values()
+                            .get(spreadsheetId=INGRESOS_OPERACION_SHEET_ID, range=rng)
+                            .execute())
+            vals = resp.get("values", [])
+            if not vals or not vals[0]:
+                return 0
+            raw = str(vals[0][0]).strip()
+            raw = raw.replace(",", "")
+            raw = re.sub(r"[^\d\.\-]", "", raw)
+            if not raw or raw == "-":
+                return 0
+            return int(float(raw))
+        except Exception:
+            return 0
+
 
 
     def _get_ingresos_operacion_week_counts_current_month(_service, _start, _end):
@@ -783,16 +808,19 @@ def index():
                 asiste_mes = 0
 
         # Por ahora se deja en 0; después se conectará el cálculo real.
-        ingresos_operacion_mes = _get_ingresos_operacion_mes(service, dt_mes)
+        ingresos_capacitacion_mes = _get_ingresos_capacitacion_mes(service, dt_mes)  # <-- C5
+        ingresos_operacion_mes = _get_ingresos_operacion_mes(service, dt_mes)        # <-- C6
 
         funnel_datasets.append({
             "label": mes_label,
             "data": [
                 leads_fb_mes,
                 asiste_mes,
+                ingresos_capacitacion_mes,  # <-- nuevo nivel entre ambos
                 ingresos_operacion_mes,
             ],
         })
+
 
     
     # Funnel semanal (últimas 8 semanas, inicio lunes)
@@ -869,19 +897,44 @@ def index():
 ################################ COBERTURA DE CARTERA
  #####################################
 
+    def _filtrar_didi_solo_agentes(_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Regla especial: Para CAMPAÑA == 'DIDI', solo conservar filas donde PUESTO contenga 'AGENTE'.
+        Para el resto de campañas, no filtra nada.
+        """
+        if _df is None or _df.empty:
+            return _df
+
+        if "CAMPAÑA" not in _df.columns or "PUESTO" not in _df.columns:
+            # Si no existe PUESTO (o CAMPAÑA), no aplicamos filtro para no romper el flujo.
+            return _df
+
+        camp = _df["CAMPAÑA"].astype(str).str.strip().str.upper()
+        puesto = _df["PUESTO"].astype(str).str.upper()
+
+        is_didi = camp.eq("DIDI")
+        is_agente = puesto.str.contains("AGENTE", na=False)
+
+        # Mantener todo lo que NO sea DIDI, y de DIDI solo AGENTE
+        return _df.loc[~is_didi | is_agente].copy()
+
+
     df_act = df_plantilla_activa.copy()
-    df_act['FECHA_INGRESO'] = pd.to_datetime(df_act['FECHA DE INGRESO'],dayfirst=True,errors='coerce')
+    df_act = _filtrar_didi_solo_agentes(df_act)  # <-- AQUI aplica el filtro para DIDI
+    df_act['FECHA_INGRESO'] = pd.to_datetime(df_act['FECHA DE INGRESO'], dayfirst=True, errors='coerce')
     df_act = df_act.dropna(subset=['FECHA_INGRESO'])
     df_act['FECHA_BAJA'] = pd.NaT
     df_act = df_act[['CAMPAÑA', 'FECHA_INGRESO', 'FECHA_BAJA']]
 
     df_baj = df_plantilla_bajas.copy()
-    df_baj['FECHA_INGRESO'] = pd.to_datetime(df_baj['FECHA DE INGRESO'],dayfirst=True,errors='coerce')
-    df_baj['FECHA_BAJA']    = pd.to_datetime(df_baj['BAJA'],dayfirst=True,errors='coerce')
+    df_baj = _filtrar_didi_solo_agentes(df_baj)  # <-- AQUI también para bajas de DIDI
+    df_baj['FECHA_INGRESO'] = pd.to_datetime(df_baj['FECHA DE INGRESO'], dayfirst=True, errors='coerce')
+    df_baj['FECHA_BAJA']    = pd.to_datetime(df_baj['BAJA'], dayfirst=True, errors='coerce')
     df_baj = df_baj.dropna(subset=['FECHA_INGRESO'])
     df_baj = df_baj[['CAMPAÑA', 'FECHA_INGRESO', 'FECHA_BAJA']]
 
     df_personal = pd.concat([df_act, df_baj], ignore_index=True)
+
 
     month_map = {
         'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 'MAYO': 5, 'JUNIO': 6,
