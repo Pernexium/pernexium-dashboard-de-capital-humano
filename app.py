@@ -307,7 +307,7 @@ def get_data_sheets():
     service_r = build_read_service()
 
 
-
+SHEET_NAME_LEADS = os.getenv("SHEET_NAME_LEADS", "Hoja 1")
 def fetch_sheet_df(service):
     
     safe_sheet = SHEET_NAME_LEADS.replace("'", "''")
