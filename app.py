@@ -32,6 +32,9 @@ S3_SA_KEY      = os.getenv("S3_SA_KEY")
 SHEET_ID       = os.getenv("SHEET_ID")     
 SHEET_ID_2     = os.getenv("SHEET_ID_2")   
 INGRESOS_OPERACION_SHEET_ID = os.getenv("INGRESOS_OPERACION_SHEET_ID")
+SHEET_ID_LEADS = INGRESOS_OPERACION_SHEET_ID 
+
+
 SCOPES         = json.loads(os.getenv("SCOPES")) if os.getenv("SCOPES") else []
 S3_BUCKET      = os.getenv("S3_BUCKET")
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
@@ -56,23 +59,113 @@ def build_sheets_service():
     return build("sheets", "v4", credentials=creds, cache_discovery=False)
 
 def fetch_sheet_data(service, sheet_name):
-    safe_sheet = sheet_name.replace("'", "''")
-    rng  = f"'{safe_sheet}'!A1:ZZ"
+    """Lee un rango amplio de una pestaña y detecta automáticamente la fila de encabezados.
 
-    vals = (service.spreadsheets()
-                  .values()
-                  .get(spreadsheetId=SHEET_ID, range=rng)
-                  .execute()
-                  .get("values", []))
+    Algunas pestañas tienen encabezados reales después de varias filas (p.ej. filas 12-13).
+    Esta función escanea las primeras ~30 filas buscando una fila que contenga
+    varios encabezados conocidos y usa esa como header.
+    """
+    safe_sheet = sheet_name.replace("'", "''")
+    rng = f"'{safe_sheet}'!A1:ZZ"
+
+    vals = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=SHEET_ID, range=rng)
+        .execute()
+        .get("values", [])
+    )
 
     if not vals:
         return pd.DataFrame()
 
-    headers, *data = vals                                                                 
+    def _norm(s: str) -> str:
+        s = "" if s is None else str(s)
+        s = s.strip().lower()
+        s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+        s = re.sub(r"\s+", " ", s)
+        return s
+
+    # Encabezados esperados para detectar la fila correcta
+    expected = {
+        _norm("NOMBRE COMPLETO"),
+        _norm("RECLUTADOR"),
+        _norm("FECHA DE INGRESO A CAPA"),
+        _norm("DIA 1"),
+        _norm("DÍA 1"),
+        _norm("ESTATUS"),
+    }
+
+    # Buscar mejor fila de encabezados dentro de las primeras 30 filas
+    scan_rows = vals[:30]
+    best_idx, best_score = 0, -1
+    for i, row in enumerate(scan_rows):
+        row_norm = {_norm(c) for c in row if c is not None and str(c).strip() != ""}
+        score = len(row_norm & expected)
+        # preferimos mayor score, y en empate, mayor cantidad de celdas no vacías
+        if score > best_score or (score == best_score and len(row_norm) > len({_norm(c) for c in scan_rows[best_idx] if c is not None and str(c).strip() != ""})):
+            best_idx, best_score = i, score
+
+    # Si encontramos una fila posterior con señales claras, úsala como header
+    header_row_idx = best_idx if best_score >= 2 else 0
+
+    headers = vals[header_row_idx]
+
+    # ── Soporte para encabezados en 2 filas (p.ej. fila 12 con secciones y fila 13 con subheaders DIA 1..4) ──
+    # Si la fila siguiente contiene sub-encabezados relevantes (DIA 1, DIA 2, etc.) y en la fila actual
+    # hay celdas vacías / secciones (ASISTENCIA), combinamos ambos y saltamos 2 filas.
+    data_start_idx = header_row_idx + 1
+    if header_row_idx + 1 < len(vals):
+        next_row = vals[header_row_idx + 1]
+
+        next_norm = {_norm(c) for c in next_row if c is not None and str(c).strip() != ""}
+        sub_expected = {
+            _norm("DIA 1"), _norm("DÍA 1"), _norm("DIA 2"), _norm("DIA 3"), _norm("DIA 4"),
+        }
+        cur_norm = {_norm(c) for c in headers if c is not None and str(c).strip() != ""}
+
+        # Heurística: si la fila siguiente trae 'DIA 1' (u otros) y la actual trae 'ASISTENCIA' u otros headers,
+        # consideramos que es un header de 2 filas.
+        if (len(next_norm & sub_expected) >= 1) and (len(cur_norm & expected) >= 1):
+            max_cols_tmp = max(len(headers), len(next_row))
+            merged_headers = []
+            for j in range(max_cols_tmp):
+                h = headers[j] if j < len(headers) else ""
+                n = next_row[j] if j < len(next_row) else ""
+                h_str = ("" if h is None else str(h)).strip()
+                n_str = ("" if n is None else str(n)).strip()
+
+                # Si el header superior está vacío o es una sección tipo 'ASISTENCIA', usar el subheader si existe
+                if (h_str == "" or _norm(h_str) in {_norm("ASISTENCIA")} or h_str.lower().startswith("col")) and n_str != "":
+                    merged_headers.append(n_str)
+                else:
+                    merged_headers.append(h_str)
+            headers = merged_headers
+            data_start_idx = header_row_idx + 2
+
+    data = vals[data_start_idx:]
+
+    # Completar columnas faltantes y padear filas
     max_cols = max(len(headers), *(len(r) for r in data)) if data else len(headers)
-    headers += [f"Col_{i}" for i in range(len(headers), max_cols)]                        
-    padded  = [row + [None]*(max_cols - len(row)) for row in data]                        
-    return pd.DataFrame(padded, columns=[h.strip() for h in headers])
+    headers = list(headers) + [f"Col_{i}" for i in range(len(headers), max_cols)]
+    padded = [row + [None] * (max_cols - len(row)) for row in data]
+
+    # Limpiar headers, evitar vacíos y duplicados simples
+    clean_headers = []
+    seen = {}
+    for h in headers:
+        h0 = ("" if h is None else str(h)).strip()
+        if h0 == "":
+            h0 = "col"
+        key = h0.lower()
+        if key in seen:
+            seen[key] += 1
+            h0 = f"{h0}_{seen[key]}"
+        else:
+            seen[key] = 0
+        clean_headers.append(h0)
+
+    return pd.DataFrame(padded, columns=clean_headers)
 
 ######################################### FUNCIONES AUXILIARES #########################################
 
@@ -213,32 +306,98 @@ def get_data_sheets():
 
     service_r = build_read_service()
 
-    def fetch_sheet_df(service):
-        safe_sheet = SHEET_NAME_LEADS.replace("'", "''")
-        result = service.spreadsheets().values().get(
-            spreadsheetId=SHEET_ID_LEADS,
-            range=f"'{safe_sheet}'!A1:ZZ5000"
-        ).execute()
 
-        values = result.get("values", [])
-        if not values:
-            return pd.DataFrame()
 
-        headers = values[0]
-        rows    = values[1:]
+def fetch_sheet_df(service):
+    
+    safe_sheet = SHEET_NAME_LEADS.replace("'", "''")
 
-        max_len = max(len(headers), *[len(r) for r in rows]) if rows else len(headers)
-        headers = headers + [f"COL_{i}" for i in range(len(headers), max_len)]
+    result = service.spreadsheets().values().get(
+        spreadsheetId=SHEET_ID_LEADS,
+        range=f"'{safe_sheet}'!A1:ZZ5000"
+    ).execute()
 
-        norm_rows = []
-        for r in rows:
-            if len(r) < max_len:
-                r += [None] * (max_len - len(r))
-            norm_rows.append(r[:max_len])
+    values = result.get("values", [])
+    if not values:
+        return pd.DataFrame()
 
-        return pd.DataFrame(norm_rows, columns=headers)
+    # --- helpers ---
+    def _norm(s):
+        return str(s or "").strip()
 
-    return fetch_sheet_df(service_r)
+    def _is_empty_row(r):
+        return all(_norm(x) == "" for x in r)
+
+    def _score_header_row(row):
+        # Heurística: mientras más texto y menos celdas vacías, más probable que sea header
+        texts = [_norm(x) for x in row]
+        non_empty = sum(1 for x in texts if x)
+        alpha = sum(1 for x in texts if any(ch.isalpha() for ch in x))
+        return non_empty + alpha
+
+    # --- detectar fila de header (soporta header en fila 12) ---
+    max_scan = min(len(values), 30)  # escanea primeras 30 filas
+    header_idx = None
+    best_score = -1
+
+    for i in range(max_scan):
+        row = values[i]
+        if _is_empty_row(row):
+            continue
+        sc = _score_header_row(row)
+        if sc > best_score:
+            best_score = sc
+            header_idx = i
+
+    if header_idx is None:
+        return pd.DataFrame()
+
+    header1 = [_norm(x) for x in values[header_idx]]
+    header2 = []
+    # si la siguiente fila parece sub-header, úsala (header en 2 niveles)
+    if header_idx + 1 < len(values) and not _is_empty_row(values[header_idx + 1]):
+        # condición simple: que tenga varios textos y no sea puramente data numérica
+        next_row = values[header_idx + 1]
+        next_texts = [_norm(x) for x in next_row]
+        if sum(1 for x in next_texts if x) >= max(2, len(header1) // 4):
+            header2 = next_texts
+
+    # construir columnas
+    cols = []
+    for j in range(max(len(header1), len(header2))):
+        h1 = header1[j] if j < len(header1) else ""
+        h2 = header2[j] if j < len(header2) else ""
+        name = " ".join([x for x in [h1, h2] if x]).strip()
+        cols.append(name if name else f"COL_{j}")
+
+    # data empieza después del header (1 o 2 filas)
+    data_start = header_idx + (2 if header2 else 1)
+    rows = values[data_start:]
+
+    # pad rows para que tengan el mismo largo que cols
+    fixed_rows = []
+    for r in rows:
+        r = list(r)
+        if len(r) < len(cols):
+            r += [""] * (len(cols) - len(r))
+        fixed_rows.append(r[:len(cols)])
+
+    df = pd.DataFrame(fixed_rows, columns=cols)
+
+    # limpiar nombres duplicados
+    seen = {}
+    new_cols = []
+    for c in df.columns:
+        base = c.strip() if c.strip() else "COL"
+        if base not in seen:
+            seen[base] = 0
+            new_cols.append(base)
+        else:
+            seen[base] += 1
+            new_cols.append(f"{base}_{seen[base]}")
+    df.columns = new_cols
+
+    return df
 
 ############################################# DASHBOARD ##############################################
 
@@ -449,25 +608,43 @@ def index():
     data_reclutamiento = df_reclutamiento_full.copy()
     data_reclutamiento = data_reclutamiento.dropna(axis=0, how='all')
 
-    if not data_reclutamiento.empty and data_reclutamiento.shape[0] > 3:
-        data_reclutamiento.columns = data_reclutamiento.iloc[1, :]
-        data_reclutamiento = data_reclutamiento[2:]
-        data_reclutamiento = data_reclutamiento.reset_index(drop=True)
-        data_reclutamiento = data_reclutamiento[1:]
-        data_reclutamiento.columns = [
-            col.strip()
-               .replace(" ", "_")
-               .replace(".", "")
-               .replace(":", "")
-               .lower()
-               .replace("ó", "o")
-               .replace("í", "i")
-               .replace("é", "e")
-               .replace("ú", "u")
-               .replace("ñ", "n")
-               .replace("á", "a")
-            for col in data_reclutamiento.columns
-        ]
+    if not data_reclutamiento.empty:
+        # ── Normalización robusta de encabezados ──
+        def _norm_col(col):
+            col = "" if col is None else str(col)
+            col = col.strip().replace(" ", "_").replace(".", "").replace(":", "").lower()
+            col = (col.replace("ó", "o").replace("í", "i").replace("é", "e")
+                      .replace("ú", "u").replace("ñ", "n").replace("á", "a"))
+            return col
+
+        cols_norm = [_norm_col(c) for c in list(data_reclutamiento.columns)]
+        has_expected_headers = (
+            ("nombre_completo" in cols_norm)
+            or ("reclutador" in cols_norm)
+            or ("fecha_de_ingreso_a_capa" in cols_norm)
+            or ("dia_1" in cols_norm)
+        )
+
+        # Algunas pestañas traen el header real varias filas abajo (legacy).
+        # Solo aplicamos el "shift" de encabezados si NO detectamos headers válidos.
+        if (not has_expected_headers) and data_reclutamiento.shape[0] > 3:
+            header_idx = None
+            for i in range(min(6, len(data_reclutamiento))):
+                row_vals = [str(x).strip().lower() for x in data_reclutamiento.iloc[i, :].tolist()]
+                if any("nombre completo" in v for v in row_vals) or any("reclutador" == v for v in row_vals):
+                    header_idx = i
+                    break
+            if header_idx is None:
+                header_idx = 1  # fallback histórico
+
+            data_reclutamiento.columns = data_reclutamiento.iloc[header_idx, :]
+            data_reclutamiento = data_reclutamiento[header_idx + 1 :]
+            data_reclutamiento = data_reclutamiento.reset_index(drop=True)
+        else:
+            data_reclutamiento = data_reclutamiento.reset_index(drop=True)
+
+        # Normaliza nombres de columnas a snake_case simple
+        data_reclutamiento.columns = [_norm_col(col) for col in data_reclutamiento.columns]
         data_reclutamiento.rename(columns={"¿es_viable?4": "es_viable_tecnica"}, inplace=True)
         data_reclutamiento.rename(columns={"¿es_viable?": "es_viable_psicometrica"}, inplace=True)
         data_reclutamiento.columns = [
@@ -558,6 +735,63 @@ def index():
             data_reclutamiento["fecha_de_capacitacion"] = parse_fecha_mixta(
                 data_reclutamiento["fecha_de_capacitacion"]
             )
+
+
+        # === Ingresos en Capacitación (nuevo cálculo) ===
+        # Regla: tomar la fecha de la columna "FECHA DE INGRESO A CAPA" (normalizada a snake_case)
+        # y contar solo los registros donde la columna "L14" o "DIA 1" sea "SI".
+        def _pick_col(_df: pd.DataFrame, _candidates):
+            for _c in _candidates:
+                if _c in _df.columns:
+                    return _c
+            return None
+
+        _col_fecha_capa = _pick_col(
+            data_reclutamiento,
+            [
+                "fecha_de_ingreso_a_capa",
+                "fecha_ingreso_a_capa",
+                "fecha_de_ingreso_a_capacitacion",
+                "fecha_ingreso_a_capacitacion",
+            ],
+        )
+
+        if _col_fecha_capa is None:
+            for _c in data_reclutamiento.columns:
+                _cs = str(_c)
+                if ("fecha" in _cs) and ("ingreso_a_capa" in _cs or "ingreso_a_cap" in _cs or "ingreso_a_capacit" in _cs):
+                    _col_fecha_capa = _cs
+                    break
+        _col_dia1 = _pick_col(data_reclutamiento, ["dia_1", "dia1", "l14"])
+
+        # Fallback: algunas hojas traen DIA 1 duplicado o con sufijo (p.ej. dia_1_1)
+        if _col_dia1 is None:
+            for _c in data_reclutamiento.columns:
+                if re.fullmatch(r"dia_?1(_\d+)?", str(_c)):
+                    _col_dia1 = str(_c)
+                    break
+
+        if _col_fecha_capa:
+            data_reclutamiento["_fecha_ingreso_capa_dt"] = parse_fecha_mixta(
+                data_reclutamiento[_col_fecha_capa]
+            )
+        else:
+            data_reclutamiento["_fecha_ingreso_capa_dt"] = pd.NaT
+
+        if _col_dia1:
+            _dia1_s = (
+                data_reclutamiento[_col_dia1]
+                .astype(str)
+                .str.strip()
+                .str.upper()
+            )
+        else:
+            _dia1_s = pd.Series([], dtype="object")
+
+        data_reclutamiento["_bin_ingreso_capa"] = (
+            data_reclutamiento["_fecha_ingreso_capa_dt"].notna()
+            & _dia1_s.eq("SI")
+        ).astype(int)
 
         # Variables sintéticas
         if "aceptada" in data_reclutamiento.columns:
@@ -707,28 +941,6 @@ def index():
         except Exception:
             return 0
 
-    def _get_ingresos_capacitacion_mes(_service, _dt_mes):
-        # MISMA lógica que _get_ingresos_operacion_mes, pero leyendo C5
-        try:
-            sheet_name = f"{mapa_meses[int(_dt_mes.month)]} {str(int(_dt_mes.year))[-2:]}"
-            safe_sheet = sheet_name.replace("'", "''")
-            rng = f"'{safe_sheet}'!C5"   # <-- C5
-            resp = (_service.spreadsheets()
-                            .values()
-                            .get(spreadsheetId=INGRESOS_OPERACION_SHEET_ID, range=rng)
-                            .execute())
-            vals = resp.get("values", [])
-            if not vals or not vals[0]:
-                return 0
-            raw = str(vals[0][0]).strip()
-            raw = raw.replace(",", "")
-            raw = re.sub(r"[^\d\.\-]", "", raw)
-            if not raw or raw == "-":
-                return 0
-            return int(float(raw))
-        except Exception:
-            return 0
-
 
 
     def _get_ingresos_operacion_week_counts_current_month(_service, _start, _end):
@@ -790,6 +1002,43 @@ def index():
         except Exception:
             return pd.Series(dtype=int)
 
+    def _get_ingresos_operacion_daily_counts_current_month(_service, _year, _month):
+        """
+        Lee la hoja del mes dado del spreadsheet INGRESOS_OPERACION_SHEET_ID
+        y devuelve conteos DIARIOS para registros donde STATUS (col P) == 'INGRESO'
+        y FECHA (col Q) cae en ese año/mes.
+        """
+        if not INGRESOS_OPERACION_SHEET_ID:
+            return pd.Series(dtype=int)
+        try:
+            sheet_name = f"{mapa_meses[int(_month)]} {str(int(_year))[-2:]}"
+            safe_sheet = sheet_name.replace("'", "''")
+            rng = f"'{safe_sheet}'!P12:Q"
+            resp = (_service.spreadsheets()
+                            .values()
+                            .get(spreadsheetId=INGRESOS_OPERACION_SHEET_ID, range=rng)
+                            .execute())
+            rows = resp.get("values", []) or []
+            if not rows:
+                return pd.Series(dtype=int)
+            status_vals = [r[0] if len(r) > 0 else None for r in rows]
+            fecha_vals  = [r[1] if len(r) > 1 else None for r in rows]
+            status_s = (
+                pd.Series(status_vals, dtype="object")
+                  .astype(str).str.strip().str.upper()
+            )
+            fecha_dt = parse_fecha_mixta(pd.Series(fecha_vals, dtype="object"))
+            mask = status_s.eq("INGRESO") & fecha_dt.notna()
+            d = fecha_dt[mask]
+            if d.empty:
+                return pd.Series(dtype=int)
+            d = d[(d.dt.year == int(_year)) & (d.dt.month == int(_month))]
+            if d.empty:
+                return pd.Series(dtype=int)
+            return d.dt.day.value_counts().sort_index().astype(int)
+        except Exception:
+            return pd.Series(dtype=int)
+
     funnel_datasets = []
     for dt_mes in months_for_funnel:
         mes_label = f"{MESES_ES_CORTO[dt_mes.month - 1]} {dt_mes.year}"
@@ -808,7 +1057,19 @@ def index():
                 asiste_mes = 0
 
         # Por ahora se deja en 0; después se conectará el cálculo real.
-        ingresos_capacitacion_mes = _get_ingresos_capacitacion_mes(service, dt_mes)  # <-- C5
+        ingresos_capacitacion_mes = 0
+        try:
+            if (not data_reclutamiento.empty
+                and "_fecha_ingreso_capa_dt" in data_reclutamiento.columns
+                and "_bin_ingreso_capa" in data_reclutamiento.columns):
+                _capa_dates = data_reclutamiento.loc[
+                    data_reclutamiento["_bin_ingreso_capa"] == 1,
+                    "_fecha_ingreso_capa_dt"
+                ]
+                _capa_month = _capa_dates.dt.to_period("M").dt.to_timestamp()
+                ingresos_capacitacion_mes = int((_capa_month == dt_mes).sum())
+        except Exception:
+            ingresos_capacitacion_mes = 0
         ingresos_operacion_mes = _get_ingresos_operacion_mes(service, dt_mes)        # <-- C6
 
         funnel_datasets.append({
@@ -843,6 +1104,27 @@ def index():
     )
 
 
+    # Ingresos en Capacitación por semana (lunes) usando FECHA DE INGRESO A CAPA + (L14/DIA 1 == SI)
+    ingresos_capacitacion_week_dict = {}
+    try:
+        if (not data_reclutamiento.empty
+            and "_fecha_ingreso_capa_dt" in data_reclutamiento.columns
+            and "_bin_ingreso_capa" in data_reclutamiento.columns):
+            _capa_w = data_reclutamiento.loc[
+                data_reclutamiento["_bin_ingreso_capa"] == 1,
+                "_fecha_ingreso_capa_dt"
+            ]
+            _capa_w = pd.to_datetime(_capa_w, errors="coerce")
+            _capa_w = _capa_w[_capa_w.notna()]
+            if len(_capa_w):
+                # Filtra al rango de semanas del funnel
+                _capa_w = _capa_w[(_capa_w >= wk_range_start) & (_capa_w <= wk_range_end)]
+                _wk_start = _capa_w.dt.normalize() - pd.to_timedelta(_capa_w.dt.weekday, unit="D")
+                _wk_counts = _wk_start.value_counts().sort_index().astype(int)
+                ingresos_capacitacion_week_dict = {pd.to_datetime(k).normalize(): int(v) for k, v in _wk_counts.to_dict().items()}
+    except Exception:
+        ingresos_capacitacion_week_dict = {}
+
     if not data_reclutamiento.empty:
         entrevista_week = (
             data_reclutamiento["entrevista_dt"].dt.normalize()
@@ -873,11 +1155,12 @@ def index():
                 except Exception:
                     asiste_wk = 0
 
-            ingresos_wk = int(ingresos_operacion_week_dict.get(wk.normalize(), 0))
+            ingresos_capa_wk = int(ingresos_capacitacion_week_dict.get(wk.normalize(), 0))
+            ingresos_operacion_wk = int(ingresos_operacion_week_dict.get(wk.normalize(), 0))
 
             funnel_datasets_weekly.append({
                 "label": wk_label,
-                "data": [leads_fb_wk, asiste_wk, ingresos_wk],
+                "data": [leads_fb_wk, asiste_wk, ingresos_capa_wk, ingresos_operacion_wk],
             })
     else:
         # Si no hay datos, aún construye semanas vacías para el selector del modal
@@ -890,9 +1173,68 @@ def index():
             )
             funnel_datasets_weekly.append({
                 "label": wk_label,
-                "data": [0, 0, int(ingresos_operacion_week_dict.get(wk.normalize(), 0))],
+                "data": [0, 0, int(ingresos_capacitacion_week_dict.get(wk.normalize(), 0)), int(ingresos_operacion_week_dict.get(wk.normalize(), 0))],
             })
 
+
+    # === FUNNEL DIARIO (mes actual) ===
+    _cur_y = int(mx_now.year)
+    _cur_m = int(mx_now.month)
+    _days_in_month = calendar.monthrange(_cur_y, _cur_m)[1]
+    _day_idx = list(range(1, _days_in_month + 1))
+    _day_labels_f = [f"{d:02d}" for d in _day_idx]
+
+    # Leads por día (entrevista_dt, mes actual)
+    if not data_reclutamiento.empty and "entrevista_dt" in data_reclutamiento.columns:
+        _ent = data_reclutamiento["entrevista_dt"]
+        _mask_c = (_ent.dt.year == _cur_y) & (_ent.dt.month == _cur_m)
+        _dl_s = _ent[_mask_c].dt.day.value_counts()
+        _daily_leads_f = [int(_dl_s.get(d, 0)) for d in _day_idx]
+
+        # Asistieron entrevista por día (fecha_publicacion + bin_asiste_entrevista)
+        if "fecha_publicacion" in data_reclutamiento.columns and "bin_asiste_entrevista" in data_reclutamiento.columns:
+            _pub = data_reclutamiento["fecha_publicacion"]
+            _mp = (_pub.dt.year == _cur_y) & (_pub.dt.month == _cur_m)
+            _df_pd = data_reclutamiento[_mp].copy()
+            if not _df_pd.empty:
+                _df_pd["_d"] = _pub[_mp].dt.day
+                _as_s = _df_pd.groupby("_d")["bin_asiste_entrevista"].sum()
+                _daily_ent_f = [int(_as_s.get(d, 0)) for d in _day_idx]
+            else:
+                _daily_ent_f = [0] * len(_day_idx)
+        else:
+            _daily_ent_f = [0] * len(_day_idx)
+
+        # Ingresos capacitación por día (FECHA DE INGRESO A CAPA + (L14/DIA 1 == SI))
+        if "_fecha_ingreso_capa_dt" in data_reclutamiento.columns and "_bin_ingreso_capa" in data_reclutamiento.columns:
+            _cap = data_reclutamiento.loc[data_reclutamiento["_bin_ingreso_capa"] == 1, "_fecha_ingreso_capa_dt"]
+            _cap = pd.to_datetime(_cap, errors="coerce")
+            _mc = (_cap.dt.year == _cur_y) & (_cap.dt.month == _cur_m)
+            _dc_s = _cap[_mc].dt.day.value_counts()
+            _daily_cap_f = [int(_dc_s.get(d, 0)) for d in _day_idx]
+        else:
+            _daily_cap_f = [0] * len(_day_idx)
+    else:
+        _daily_leads_f = [0] * len(_day_idx)
+        _daily_ent_f   = [0] * len(_day_idx)
+        _daily_cap_f   = [0] * len(_day_idx)
+
+    # Ingresos operación por día (desde hoja de operaciones)
+    _ops_daily = _get_ingresos_operacion_daily_counts_current_month(service, _cur_y, _cur_m)
+    _daily_op_f = [int(_ops_daily.get(d, 0)) for d in _day_idx]
+
+    _MESES_COMPLETOS_F = [
+        'Enero','Febrero','Marzo','Abril','Mayo','Junio',
+        'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'
+    ]
+    funnel_daily_data = {
+        "labels":       _day_labels_f,
+        "leads":        _daily_leads_f,
+        "entrevista":   _daily_ent_f,
+        "capacitacion": _daily_cap_f,
+        "operacion":    _daily_op_f,
+        "month_label":  f"{_MESES_COMPLETOS_F[_cur_m - 1]} {_cur_y}"
+    }
 
 ################################ COBERTURA DE CARTERA
  #####################################
@@ -1015,6 +1357,12 @@ def index():
     cobertura_values      = coverage_df['% COBERTURA'].tolist()
     cobertura_autorizados = coverage_df['PLANTILLA AUTORIZADA'].tolist()
     cobertura_activos     = coverage_df['TOTAL ACTIVOS'].tolist()
+
+    # Mini-chart: últimos 3 meses para mostrar junto al KPI de Personal Autorizado
+    cobertura_labels_mini      = cobertura_labels[-3:]
+    cobertura_values_mini      = cobertura_values[-3:]
+    cobertura_autorizados_mini = cobertura_autorizados[-3:]
+    cobertura_activos_mini     = cobertura_activos[-3:]
     df_detalle = df_cobertura_de_cartera.copy()
     df_detalle['MES_NUM'] = df_detalle['MES'].map(month_map)
     df_detalle = df_detalle.sort_values(
@@ -1513,16 +1861,22 @@ def index():
         contratos_estructura=contratos_estructura,
         contratos_operacion=contratos_operacion,
         contratos_por_area=contratos_por_area_dict,
-        # Funnel (mensual + semanal)
+        # Funnel (mensual + semanal + diario)
         funnel_labels=funnel_labels,
         funnel_datasets=funnel_datasets,
         funnel_datasets_weekly=funnel_datasets_weekly,
+        funnel_daily_data=funnel_daily_data,
         # Cobertura cartera
         cobertura_labels=cobertura_labels,
         cobertura_values=cobertura_values,
         cobertura_autorizados=cobertura_autorizados,
         cobertura_activos=cobertura_activos,
         cobertura_detalle_rows=cobertura_detalle_rows,
+        # Mini-chart cobertura (últimos 3 meses)
+        cobertura_labels_mini=cobertura_labels_mini,
+        cobertura_values_mini=cobertura_values_mini,
+        cobertura_autorizados_mini=cobertura_autorizados_mini,
+        cobertura_activos_mini=cobertura_activos_mini,
         # Ingresos vs bajas semanal / mensual
         # Ingresos vs bajas semanal / mensual (últimos 12 meses)
         ingresos_bajas_periodo=ingresos_bajas_periodo,
