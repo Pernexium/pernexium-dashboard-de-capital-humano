@@ -160,6 +160,40 @@
       border: 1px solid rgba(15,23,42,0.10);
     }
 
+    .funnel-eff-connector {
+      height: 20px;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .funnel-eff-line {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 1.5px;
+      height: 100%;
+      background: linear-gradient(to bottom, rgba(100,116,139,0.35), rgba(100,116,139,0.1));
+    }
+    .funnel-eff-badge {
+      position: relative;
+      z-index: 2;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      border-radius: 9999px;
+      padding: 1px 8px;
+      font-size: 0.60rem;
+      font-weight: 700;
+      white-space: nowrap;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.10);
+    }
+    .funnel-eff-spacer {
+      height: 20px;
+      margin: 0;
+      flex-shrink: 0;
+    }
     /* Funnel (modal) más compacto */
     #funnel-detail-container .funnel-card {
       padding: 0.95rem 1.15rem;
@@ -309,7 +343,7 @@
   <!-- ================= CONTENIDO ================= -->
   <main class="container mx-auto px-4 py-8">
     <!-- KPIs -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
         <!-- Personal Autorizado -->
         <div
             class="group relative overflow-hidden bg-gradient-to-br from-white via-slate-50 to-slate-100/60
@@ -353,6 +387,62 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Cobertura de Plantilla (KPI independiente) -->
+        {% set cob_actual   = cobertura_values_mini[-1]      if cobertura_values_mini      else 0 %}
+        {% set cob_activos  = cobertura_activos_mini[-1]     if cobertura_activos_mini     else 0 %}
+        {% set cob_autoriza = cobertura_autorizados_mini[-1] if cobertura_autorizados_mini else 0 %}
+        {% set cob_pct_bar  = [cob_actual, 100] | min %}
+        <div
+            id="kpi-cobertura-card"
+            class="group relative overflow-hidden bg-gradient-to-br from-white via-slate-50 to-slate-100/60
+                  rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
+                  border border-slate-200/80
+                  transition-all duration-200 hover:-translate-y-1.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.18)]
+                  cursor-pointer">
+            <div class="absolute inset-x-0 top-0 h-1 bg-[#0c376c]"></div>
+            <div class="p-6 flex flex-col gap-3">
+
+                <!-- Encabezado -->
+                <div class="flex items-start justify-between gap-3">
+                    <h3 class="text-base md:text-lg font-semibold text-slate-900 tracking-tight">
+                        Cobertura de Plantilla
+                    </h3>
+                    <div
+                        class="mt-[-4px] p-2.5 rounded-2xl bg-[#0c376c]/10 text-[#0c376c]
+                              ring-1 ring-[#0c376c]/20 group-hover:bg-[#0c376c]/15 shrink-0">
+                        <i data-feather="bar-chart-2" class="w-5 h-5"></i>
+                    </div>
+                </div>
+
+                <!-- Activos / Autorizados -->
+                <div class="flex items-center justify-between text-sm">
+                    <span class="text-slate-600">Activos / Autorizados</span>
+                    <span class="font-semibold text-slate-900 tabular-nums">{{ cob_activos }} / {{ cob_autoriza }}</span>
+                </div>
+
+                <!-- Barra de progreso -->
+                <div class="w-full bg-slate-200/70 rounded-full h-2.5 overflow-hidden">
+                    <div class="h-2.5 rounded-full transition-all duration-700"
+                        style="width: {{ cob_pct_bar }}%;
+                               background: {% if cob_actual >= 90 %}#0c376c{% elif cob_actual >= 70 %}#f59e0b{% else %}#ef4444{% endif %};">
+                    </div>
+                </div>
+
+                <!-- Total -->
+                <div class="pt-3 mt-2 border-t border-dashed border-slate-200">
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-xs font-semibold tracking-[0.16em] uppercase text-slate-500">
+                            Cobertura Actual
+                        </span>
+                        <span class="text-2xl font-extrabold text-[#0c376c] tabular-nums">
+                            {{ "%.1f"|format(cob_actual) }}%
+                        </span>
+                    </div>
+                </div>
+
             </div>
         </div>
         <!-- Equidad de Género -->
@@ -463,56 +553,72 @@
         </div>
     </div>
      <!-- ========== FUNNEL DE RECLUTAMIENTO ========== -->
-    <section class="mt-8 flex flex-wrap gap-6">
-      <div class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)] border border-slate-200/80 p-6 w-full md:w-[520px] lg:w-[560px] xl:w-[600px] flex flex-col">
-        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-4">
-          <div class="space-y-1">
-            <h2 class="text-lg md:text-xl font-semibold text-slate-900">
-              Funnel de Reclutamiento
-            </h2>
-          </div>
-          <div class="flex items-center gap-2 self-start lg:self-auto">
-            <button
-              id="btn-funnel-detalle"
-              type="button"
-              class="font-medium text-[15px] text-[#0c376c] hover:underline"
-            >
-              Ver detalle
-            </button>
-          </div>
-        </div>
-        <div id="funnels-container" class="mt-2 flex justify-start flex-1 min-h-0 w-full"></div>
-        <div id="funnels-legend" class="funnel-legend mt-2 pt-1"></div>
-      </div>
-      <!-- COBERTURA POR CARTERA - GRÁFICA + BOTÓN DETALLE -->
-      <div
-        class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
-              border border-slate-200/80 p-6 flex-1 min-w-[320px]"
-      >
-        <div class="flex itemscenter justify-between gap-3 mb-4">
-          <div class="space-y-1">
-            <h2 class="text-lg md:text-xl font-semibold text-slate-900">
-              Cobertura de Plantilla
-            </h2>
-          </div>
-          <div class="flex items-center gap-2 justify-end">
-            <button
-              id="btn-cobertura-detalle"
-              class="font-medium text-[15px] text-[#0c376c] hover:underline"
-            >
-              Ver detalle
-            </button>
-          </div>
-        </div>
-        <div class="rounded-xl bg-white p-3 h-68 flex flex-col">
-          <div class="flex items-center justify-end mb-2 shrink-0"></div>
-          <div class="flex-1 min-h-0">
-            <div class="coverage-chart-container">
-              <canvas id="coverage-chart"></canvas>
+    <section class="mt-8 flex flex-col gap-6">
+      <!-- Fila completa: Funnel izq. + Análisis der. -->
+      <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+        <!-- ── IZQUIERDA: Funnel con % eficiencia ── -->
+        <div class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)] border border-slate-200/80 p-6 flex flex-col gap-4">
+          <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
+            <div class="space-y-0.5">
+              <h2 class="text-lg md:text-xl font-semibold text-slate-900">Funnel de Reclutamiento</h2>
+</div>
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-start gap-2">
+              <!-- Selector de periodo (izquierda) -->
+              <div class="relative w-full sm:w-auto">
+                <select id="funnel-main-period-select"
+                  class="w-full sm:w-auto appearance-none bg-white border border-slate-200 text-slate-700 text-xs font-medium rounded-full pl-3 pr-7 py-1.5
+                         focus:outline-none focus:ring-2 focus:ring-[#0c376c]/20">
+                </select>
+                <i class="fas fa-chevron-down pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] text-slate-500"></i>
+              </div>
+
+              <!-- Toggle Mensual / Semanal (derecha) -->
+              <div class="inline-flex rounded-full border border-slate-200 bg-slate-100 text-xs p-0.5">
+                <button id="funnel-main-toggle-mensual" type="button"
+                  class="px-3 py-1.5 rounded-full font-medium bg-[#0c376c] text-white shadow-sm">
+                  Mensual
+                </button>
+                <button id="funnel-main-toggle-semanal" type="button"
+                  class="px-3 py-1.5 rounded-full font-medium text-slate-700 bg-slate-100">
+                  Semanal
+                </button>
+              </div>
             </div>
           </div>
+          <div id="funnels-container" class="mt-1 flex justify-center flex-1 min-h-0 w-full"></div>
+          <div id="funnels-legend" class="funnel-legend mt-1 pt-2 border-t border-slate-200/60"></div>
         </div>
+
+        <!-- ── DERECHA: Análisis del Funnel (Día / Semana / Mes) ── -->
+        <div class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)] border border-slate-200/80 p-6 flex flex-col">
+          <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
+            <div class="space-y-0.5">
+              <h2 class="text-lg md:text-xl font-semibold text-slate-900">Análisis del Funnel</h2>
+              <p id="funnel-chart-subtitle" class="text-xs text-slate-500">Progresión diaria — cargando…</p>
+            </div>
+            <div class="inline-flex rounded-full border border-slate-200 bg-slate-100 text-xs p-0.5 self-start lg:self-auto">
+              <button id="funnel-chart-dia" type="button"
+                class="px-3 py-1.5 rounded-full font-medium bg-[#0c376c] text-white shadow-sm">
+                Día
+              </button>
+              <button id="funnel-chart-semana" type="button"
+                class="px-3 py-1.5 rounded-full font-medium text-slate-700 bg-slate-100">
+                Semana
+              </button>
+              <button id="funnel-chart-mes" type="button"
+                class="px-3 py-1.5 rounded-full font-medium text-slate-700 bg-slate-100">
+                Mes
+              </button>
+            </div>
+          </div>
+          <div class="flex-1" style="min-height: 320px; position: relative;">
+            <canvas id="funnel-analysis-chart"></canvas>
+          </div>
+        </div>
+
       </div>
+      <!-- ESPACIO RESERVADO (Cobertura de Plantilla movida al KPI de Personal Autorizado) -->
       <!-- INGRESOS VS BAJAS - SEMANAL / MENSUAL -->
       <div
         class="bg-white rounded-2xl shadow-[0_18px_45px_rgba(15,23,42,0.10)]
@@ -1258,6 +1364,36 @@ const btnPDF = document.getElementById('download-pdf');
           const width = maxWidth - i * step;
           const stageColor = stageColors[i % stageColors.length];
 
+          // ── Conector de eficiencia entre niveles ──
+          if (i > 0) {
+            const prevVal = values[i - 1] || 0;
+            const stepRatio = prevVal > 0 ? v / prevVal : 0;
+
+            // % eficiencia entre niveles consecutivos: (nivel actual / nivel anterior)
+            const effPct = prevVal > 0 ? (stepRatio * 100).toFixed(1) : '—';
+
+            // Color semafórico según la caída vs el nivel anterior (stepRatio)
+            const effColor = prevVal === 0 ? '#64748b'
+              : stepRatio >= 0.70 ? '#16a34a'
+              : stepRatio >= 0.40 ? '#d97706'
+              : '#dc2626';
+
+            // Conector en la pirámide
+            const connDiv = document.createElement('div');
+            connDiv.className = 'funnel-eff-connector';
+            const badge = document.createElement('div');
+            badge.className = 'funnel-eff-badge';
+            badge.style.cssText = `border-color:${effColor}55; color:${effColor}; background:linear-gradient(135deg,${effColor}12,${effColor}22);`;
+            badge.innerHTML = `<svg width="8" height="8" viewBox="0 0 8 8" fill="none" style="flex-shrink:0"><path d="M4 0.5v6M2 4.5l2 2 2-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>${effPct}%`;
+            connDiv.appendChild(badge);
+            pyramidWrapper.appendChild(connDiv);
+
+            // Spacer en la leyenda (mismo alto que el conector)
+            const spacer = document.createElement('div');
+            spacer.className = 'funnel-eff-spacer';
+            legendCol.appendChild(spacer);
+          }
+
           const stage = document.createElement('div');
           stage.className = 'funnel-stage';
           stage.style.width = width + '%';
@@ -1297,14 +1433,248 @@ const btnPDF = document.getElementById('download-pdf');
         targetEl.appendChild(card);
       }
 
-      // Render inicial en la tarjeta (mensual, último mes disponible)
-      if (funnelMainContainer && Array.isArray(funnelDatasetsMonthly) && funnelDatasetsMonthly.length) {
-        renderFunnelCard(
-          funnelMainContainer,
-          funnelDatasetsMonthly[funnelDatasetsMonthly.length - 1],
-          'mensual'
-        );
+      // ── Tarjeta principal: toggle Mensual/Semanal + selector de periodo ──
+      let funnelMainMode = 'mensual';
+      const funnelMainToggleMensual  = document.getElementById('funnel-main-toggle-mensual');
+      const funnelMainToggleSemanal  = document.getElementById('funnel-main-toggle-semanal');
+      const funnelMainPeriodSelect   = document.getElementById('funnel-main-period-select');
+
+      function getMainDatasets() {
+        return funnelMainMode === 'mensual'
+          ? (funnelDatasetsMonthly || [])
+          : (funnelDatasetsWeekly  || []);
       }
+
+      function populateMainPeriods() {
+        if (!funnelMainPeriodSelect) return;
+        const ds = getMainDatasets();
+        funnelMainPeriodSelect.innerHTML = '';
+        ds.forEach((d, idx) => {
+          const opt = document.createElement('option');
+          opt.value = String(idx);
+          let lbl = d.label || `Periodo ${idx + 1}`;
+          if (funnelMainMode === 'mensual') {
+            const full = getFullSpanishMonthLabel(lbl);
+            lbl = capitalizeFirst(full);
+          } else {
+            const parts = lbl.split(' - ');
+            lbl = parts[0] || lbl;
+          }
+          opt.textContent = lbl;
+          funnelMainPeriodSelect.appendChild(opt);
+        });
+        if (ds.length) funnelMainPeriodSelect.value = String(ds.length - 1);
+      }
+
+      function renderMainFunnel() {
+        const ds = getMainDatasets();
+        if (!ds.length || !funnelMainContainer) return;
+        const idx = funnelMainPeriodSelect
+          ? parseInt(funnelMainPeriodSelect.value || '0', 10)
+          : ds.length - 1;
+        const dataset = ds[Math.max(0, Math.min(idx, ds.length - 1))];
+        renderFunnelCard(funnelMainContainer, dataset, funnelMainMode);
+      }
+
+      function setMainToggleUI(mode) {
+        const active   = 'px-3 py-1.5 rounded-full font-medium bg-[#0c376c] text-white shadow-sm';
+        const inactive = 'px-3 py-1.5 rounded-full font-medium text-slate-700 bg-slate-100';
+        if (funnelMainToggleMensual) funnelMainToggleMensual.className = mode === 'mensual' ? active : inactive;
+        if (funnelMainToggleSemanal) funnelMainToggleSemanal.className = mode === 'semanal' ? active : inactive;
+      }
+
+      function switchMainMode(mode) {
+        funnelMainMode = mode;
+        setMainToggleUI(mode);
+        populateMainPeriods();
+        renderMainFunnel();
+      }
+
+      populateMainPeriods();
+      renderMainFunnel();
+
+      if (funnelMainToggleMensual)
+        funnelMainToggleMensual.addEventListener('click', () => switchMainMode('mensual'));
+      if (funnelMainToggleSemanal)
+        funnelMainToggleSemanal.addEventListener('click', () => switchMainMode('semanal'));
+      if (funnelMainPeriodSelect)
+        funnelMainPeriodSelect.addEventListener('change', renderMainFunnel);
+
+      // ── Análisis del Funnel (panel derecho: Día / Semana / Mes) ──
+      const funnelAnalysisCanvas  = document.getElementById('funnel-analysis-chart');
+      const funnelDailyData       = {{ funnel_daily_data | tojson }};
+      const funnelAnalysisColors  = ['#0c376c', '#1c5896', '#3a7ec4', '#5fb8b2'];
+
+      let funnelAnalysisChart = null;
+      let funnelAnalysisMode  = 'dia';
+
+      function buildFunnelAnalysisDataset(mode) {
+        if (mode === 'dia') {
+          // Gráfica de líneas: cada etapa por día del mes actual
+          const datasets = [
+            { key: 'leads',        label: funnelLabels[0] || 'Leads en Facebook',          fill: true,  borderDash: [] },
+            { key: 'entrevista',   label: funnelLabels[1] || 'Asistieron a Entrevista',     fill: false, borderDash: [] },
+            { key: 'capacitacion', label: funnelLabels[2] || 'Ingresos en Capacitación',    fill: false, borderDash: [4,3] },
+            { key: 'operacion',    label: funnelLabels[3] || 'Ingresos a Operación',         fill: false, borderDash: [2,2] },
+          ];
+          return {
+            chartType: 'line',
+            labels: funnelDailyData.labels || [],
+            datasets: datasets.map((cfg, i) => ({
+              label: cfg.label,
+              data: funnelDailyData[cfg.key] || [],
+              borderColor: funnelAnalysisColors[i],
+              backgroundColor: cfg.fill ? funnelAnalysisColors[i] + '14' : 'transparent',
+              borderDash: cfg.borderDash,
+              tension: 0.35,
+              fill: cfg.fill,
+              pointRadius: 3,
+              pointHoverRadius: 5,
+              borderWidth: 2,
+              pointBackgroundColor: funnelAnalysisColors[i]
+            }))
+          };
+        }
+
+        if (mode === 'semana') {
+          // Barras agrupadas por semana (últimas 8)
+          const ds = (funnelDatasetsWeekly || []).slice(-8);
+          const labels = ds.map(d => {
+            const parts = (d.label || '').split(' - ');
+            return parts[0] ? parts[0].replace('Semana ', 'Sem ') : d.label;
+          });
+          return {
+            chartType: 'bar',
+            labels,
+            datasets: (funnelLabels || []).map((lbl, i) => ({
+              label: lbl,
+              data: ds.map(d => (d.data || [])[i] || 0),
+              backgroundColor: funnelAnalysisColors[i],
+              borderColor: funnelAnalysisColors[i],
+              borderWidth: 1,
+              borderRadius: 4,
+              maxBarThickness: 18
+            }))
+          };
+        }
+
+        // Mes: barras agrupadas últimos 3 meses
+        const recent = (funnelDatasetsMonthly || []).slice(-3);
+        const labels = recent.map(d => {
+          const full = getFullSpanishMonthLabel(d.label);
+          return capitalizeFirst(full);
+        });
+        return {
+          chartType: 'bar',
+          labels,
+          datasets: (funnelLabels || []).map((lbl, i) => ({
+            label: lbl,
+            data: recent.map(d => (d.data || [])[i] || 0),
+            backgroundColor: funnelAnalysisColors[i],
+            borderColor: funnelAnalysisColors[i],
+            borderWidth: 1,
+            borderRadius: 6,
+            maxBarThickness: 44
+          }))
+        };
+      }
+
+      function renderFunnelAnalysisChart(mode) {
+        if (!funnelAnalysisCanvas) return;
+        const ctx = funnelAnalysisCanvas.getContext('2d');
+        if (funnelAnalysisChart) { funnelAnalysisChart.destroy(); funnelAnalysisChart = null; }
+
+        const cfg = buildFunnelAnalysisDataset(mode);
+
+        funnelAnalysisChart = new Chart(ctx, {
+          type: cfg.chartType,
+          data: { labels: cfg.labels, datasets: cfg.datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            layout: { padding: { top: 18, right: 10, bottom: 0, left: 0 } },
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: { usePointStyle: true, padding: 10, font: { size: 10 } }
+              },
+              tooltip: {
+                callbacks: {
+                  label: function(ctx) {
+                    const v = ctx.parsed.y || 0;
+                    // Si es la segunda etapa en adelante, calcular eficiencia vs anterior
+                    const dsIdx = ctx.datasetIndex;
+                    let extra = '';
+                    if (dsIdx > 0) {
+                      const prevDs = ctx.chart.data.datasets[dsIdx - 1];
+                      const prevV  = prevDs ? (prevDs.data[ctx.dataIndex] || 0) : 0;
+                      const eff = prevV > 0 ? ((v / prevV) * 100).toFixed(1) + '% conv.' : '—';
+                      extra = `  ·  ${eff}`;
+                    }
+                    return ` ${ctx.dataset.label}: ${v.toLocaleString('es-MX')}${extra}`;
+                  }
+                }
+              }
+            },
+            scales: {
+              x: {
+                grid: { display: false },
+                ticks: {
+                  color: '#64748b',
+                  maxTicksLimit: mode === 'dia' ? 16 : undefined,
+                  font: { size: 10 }
+                }
+              },
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  callback: v => v.toLocaleString('es-MX'),
+                  color: '#64748b',
+                  font: { size: 10 }
+                },
+                grid: { color: 'rgba(148,163,184,0.18)', drawBorder: false }
+              }
+            }
+          }
+        });
+      }
+
+      // Botones del panel de análisis
+      const btnFunnelDia    = document.getElementById('funnel-chart-dia');
+      const btnFunnelSemana = document.getElementById('funnel-chart-semana');
+      const btnFunnelMes    = document.getElementById('funnel-chart-mes');
+      const funnelChartSubtitle = document.getElementById('funnel-chart-subtitle');
+
+      const subtitles = {
+        dia:    funnelDailyData && funnelDailyData.month_label
+                  ? `Progresión diaria — ${funnelDailyData.month_label}`
+                  : 'Progresión diaria — mes actual',
+        semana: 'Evolución semanal — últimas 8 semanas',
+        mes:    'Evolución mensual — últimos 3 meses'
+      };
+
+      function setFunnelAnalysisBtn(mode) {
+        const active   = 'px-3 py-1.5 rounded-full font-medium bg-[#0c376c] text-white shadow-sm';
+        const inactive = 'px-3 py-1.5 rounded-full font-medium text-slate-700 bg-slate-100';
+        if (btnFunnelDia)    btnFunnelDia.className    = mode === 'dia'    ? active : inactive;
+        if (btnFunnelSemana) btnFunnelSemana.className = mode === 'semana' ? active : inactive;
+        if (btnFunnelMes)    btnFunnelMes.className    = mode === 'mes'    ? active : inactive;
+        if (funnelChartSubtitle) funnelChartSubtitle.textContent = subtitles[mode] || '';
+      }
+
+      function switchAnalysisMode(mode) {
+        funnelAnalysisMode = mode;
+        renderFunnelAnalysisChart(mode);
+        setFunnelAnalysisBtn(mode);
+      }
+
+      // Render inicial
+      switchAnalysisMode('dia');
+
+      if (btnFunnelDia)    btnFunnelDia.addEventListener('click',    () => switchAnalysisMode('dia'));
+      if (btnFunnelSemana) btnFunnelSemana.addEventListener('click', () => switchAnalysisMode('semana'));
+      if (btnFunnelMes)    btnFunnelMes.addEventListener('click',    () => switchAnalysisMode('mes'));
 
       // ===== Modal Funnel (Ver detalle) =====
       let funnelMode = 'mensual';
@@ -1403,171 +1773,8 @@ const btnPDF = document.getElementById('download-pdf');
 
 
 
-      // === Gráfica de Cobertura de Cartera (Barras) ===
-      const coverageLabels      = {{ cobertura_labels      | tojson }};
-      const coverageValues      = {{ cobertura_values      | tojson }}; 
-      const coverageAutorizados = {{ cobertura_autorizados | tojson }};
-      const coverageActivos     = {{ cobertura_activos     | tojson }};
-      const coverageCanvas = document.getElementById('coverage-chart');
-
-      if (coverageCanvas && Array.isArray(coverageLabels) && coverageLabels.length) {
-        const ctx = coverageCanvas.getContext('2d');
-
-        const raw = coverageLabels.map((label, i) => {
-          const porcentaje   = coverageValues[i]       ?? 0;
-          const autorizados  = coverageAutorizados[i]  ?? 0;
-          const activos      = coverageActivos[i]      ?? 0;
-          const faltante     = Math.max(autorizados - activos, 0);
-          return { label, porcentaje, autorizados, activos, faltante };
-        });
-
-        const labels          = raw.map(r => r.label);
-        const dataActivos     = raw.map(r => r.activos);
-        const dataFaltante    = raw.map(r => r.faltante);
-        const textoPorcentaje = raw.map(r => `${(r.porcentaje ?? 0).toFixed(1)}%`);
-        const textoActAut     = raw.map(
-          r => `${r.activos.toLocaleString('es-MX')} / ${r.autorizados.toLocaleString('es-MX')}`
-        );
-
-        const barCount     = labels.length;
-        const barThickness =
-          barCount <= 3 ? 60 :
-          barCount <= 8 ? 40 :
-          26;
-
-        const maxAutorizados = Math.max(...raw.map(r => r.autorizados || 0), 0);
-        const suggestedMax   = maxAutorizados > 0 ? maxAutorizados * 1.15 : undefined;
-
-        const totalLabelPluginCobertura = {
-          id: 'totalLabelPluginCobertura',
-          afterDatasetsDraw(chart, args, pluginOptions) {
-            const { ctx } = chart;
-            const meta = chart.getDatasetMeta(chart.data.datasets.length - 1);
-            ctx.save();
-            ctx.font = '12px sans-serif';
-            ctx.fillStyle = '#000';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
-            meta.data.forEach((bar, i) => {
-              const xPos = bar.x;
-              const yPos = bar.y - 4;
-              ctx.fillText(textoPorcentaje[i], xPos, yPos);
-            });
-            ctx.restore();
-          }
-        };
-
-        new Chart(ctx, {
-          type: 'bar',
-          data: {
-            labels,
-            datasets: [
-              {
-                label: 'Activos',
-                data: dataActivos,
-                backgroundColor: '#0c376c',
-                borderWidth: 0,
-                barThickness: barThickness,
-                maxBarThickness: barThickness,
-                stack: 'total'
-              },
-              {
-                label: 'Faltantes',
-                data: dataFaltante,
-                backgroundColor: '#94a3b8',
-                borderWidth: 0,
-                barThickness: barThickness,
-                maxBarThickness: barThickness,
-                stack: 'total'
-              }
-            ]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            layout: {
-              padding: {
-                top: -4,   
-                right: 8,
-                bottom: 0,
-                left: 0
-              }
-            },
-            plugins: {
-              legend: {
-                position: 'top',
-                labels: {
-                  padding: 3,   
-                  boxWidth: 12,
-                  boxHeight: 12
-                },
-                padding: 3
-              },
-              tooltip: {
-                mode: 'nearest',
-                intersect: false,
-                callbacks: {
-                  label: function (context) {
-                    const datasetLabel = context.dataset.label || '';
-                    const value = context.parsed.y ?? 0;
-                    return ` ${datasetLabel}: ${value.toLocaleString('es-MX')}`;
-                  },
-                  afterBody: function (items) {
-                    const idx = items[0].dataIndex;
-                    return [
-                      `Cobertura: ${textoPorcentaje[idx]}`,
-                      `Activos / Autorizados: ${textoActAut[idx]}`
-                    ];
-                  }
-                }
-              }
-            },
-            scales: {
-              x: {
-                stacked: true,
-                categoryPercentage:
-                  barCount <= 3 ? 0.5 :
-                  barCount <= 8 ? 0.7 : 0.9,
-                barPercentage:
-                  barCount <= 3 ? 0.85 :
-                  barCount <= 8 ? 0.9 : 0.95,  
-                grid: {
-                  display: false,
-                  drawBorder: false
-                },
-                ticks: {
-                  font: { size: 10 },
-                  color: '#64748b',
-                  maxRotation: 45,
-                  minRotation: 0,
-                  padding: 4
-                }
-              },
-              y: {
-                stacked: true,
-                beginAtZero: true,
-                suggestedMax: suggestedMax,
-                ticks: {
-                  callback: function (value) {
-                    return value.toLocaleString('es-MX');
-                  },
-                  font: { size: 10 },
-                  color: '#64748b',
-                  padding: 4
-                },
-                grid: {
-                  display: false,
-                  drawBorder: false
-                }
-              }
-            }
-          },
-          plugins: [totalLabelPluginCobertura]
-        });
-      }
-
       // === Modal "Ver Detalle" Cobertura ===
-      const detalleBtn = document.getElementById('btn-cobertura-detalle');
+      const detalleBtn = document.getElementById('kpi-cobertura-card');
       const coverageModal = document.getElementById('coverage-modal');
       const closeBtnHead = document.getElementById('coverage-modal-close');
       const closeBtnFooter = document.getElementById('coverage-modal-close-footer');
