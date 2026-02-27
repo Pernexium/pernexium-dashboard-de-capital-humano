@@ -554,6 +554,13 @@ def index():
                 lambda x: np.nan if x == '-' else x
             )
 
+        # Fecha ingreso a capacitación (nueva lógica) y compatibilidad con campo anterior
+        if "fecha_de_ingreso_a_capa" in data_reclutamiento.columns:
+            data_reclutamiento["fecha_de_ingreso_a_capa"] = parse_fecha_mixta(
+                data_reclutamiento["fecha_de_ingreso_a_capa"]
+            )
+
+        # Compatibilidad (si todavía existe en algunas bases)
         if "fecha_de_capacitacion" in data_reclutamiento.columns:
             data_reclutamiento["fecha_de_capacitacion"] = parse_fecha_mixta(
                 data_reclutamiento["fecha_de_capacitacion"]
@@ -707,29 +714,163 @@ def index():
         except Exception:
             return 0
 
+
+    
+    def _parse_sheet_date_ddmmyy(v):
+        """Parsea fechas de Google Sheets que pueden venir como string (dd-mm-yy / dd/mm/yy)
+        o como serial numérico (días desde 1899-12-30). Devuelve datetime o None.
+        """
+        if v is None:
+            return None
+
+        # Serial numérico (Excel/Sheets)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            try:
+                base = datetime(1899, 12, 30)
+                return base + timedelta(days=float(v))
+            except Exception:
+                return None
+
+        s = str(v).strip()
+        if not s or s.lower() in {"nan", "none", "-"}:
+            return None
+
+        # Normaliza separadores
+        s2 = s.replace(".", "/").replace("-", "/")
+        try:
+            d = pd.to_datetime(s2, dayfirst=True, errors="coerce")
+            if pd.isna(d):
+                return None
+            return d.to_pydatetime()
+        except Exception:
+            return None
+
+    def _norm_si(v):
+        if v is None:
+            return ""
+        s = str(v).strip().upper()
+        # Quita acentos: SÍ -> SI
+        s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+        return s
+
+    def _read_capacitacion_fechas_y_dia1(_service, sheet_name):
+        """Lee FECHA DE INGRESO A CAPA (J) y DIA 1 (L) desde la misma hoja.
+        Por requerimiento: FECHA DE INGRESO A CAPA en J12:J, DIA 1 en L12:L.
+        Devuelve dos listas alineadas (fechas_raw, dia1_raw).
+        """
+        safe_sheet = sheet_name.replace("'", "''")
+        rng_fechas = f"'{safe_sheet}'!J12:J"
+        rng_dia1   = f"'{safe_sheet}'!L12:L"
+
+        resp_f = (_service.spreadsheets().values().get(
+            spreadsheetId=INGRESOS_OPERACION_SHEET_ID, range=rng_fechas
+        ).execute())
+        resp_d = (_service.spreadsheets().values().get(
+            spreadsheetId=INGRESOS_OPERACION_SHEET_ID, range=rng_dia1
+        ).execute())
+
+        fechas = [r[0] for r in (resp_f.get("values", []) or []) if r]
+        dia1   = [r[0] for r in (resp_d.get("values", []) or []) if r]
+
+        # Alinea longitudes (Sheets puede devolver columnas con largo diferente)
+        n = max(len(fechas), len(dia1))
+        if len(fechas) < n:
+            fechas = fechas + [None] * (n - len(fechas))
+        if len(dia1) < n:
+            dia1 = dia1 + [None] * (n - len(dia1))
+
+        return fechas, dia1
+
     def _get_ingresos_capacitacion_mes(_service, _dt_mes):
-        # MISMA lógica que _get_ingresos_operacion_mes, pero leyendo C5
+        """Ingresos en Capacitación (Nivel 3 del funnel).
+
+        Fuente: mismo spreadsheet y misma hoja mensual usada para "Ingresos a Operación"
+        (INGRESOS_OPERACION_SHEET_ID / hoja "<MES> <YY>")
+
+        Columnas / coordenadas:
+          - FECHA DE INGRESO A CAPA: J12:J  (formato dd-mm-yy / dd/mm/yy)
+          - DIA 1:                   L12:L  (contar los 'SI')
+
+        Regla: contar filas donde DIA 1 == 'SI' y la fecha cae dentro del mes consultado.
+        """
         try:
             sheet_name = f"{mapa_meses[int(_dt_mes.month)]} {str(int(_dt_mes.year))[-2:]}"
-            safe_sheet = sheet_name.replace("'", "''")
-            rng = f"'{safe_sheet}'!C5"   # <-- C5
-            resp = (_service.spreadsheets()
-                            .values()
-                            .get(spreadsheetId=INGRESOS_OPERACION_SHEET_ID, range=rng)
-                            .execute())
-            vals = resp.get("values", [])
-            if not vals or not vals[0]:
-                return 0
-            raw = str(vals[0][0]).strip()
-            raw = raw.replace(",", "")
-            raw = re.sub(r"[^\d\.\-]", "", raw)
-            if not raw or raw == "-":
-                return 0
-            return int(float(raw))
+            fechas_raw, dia1_raw = _read_capacitacion_fechas_y_dia1(_service, sheet_name)
+
+            count_si = 0
+            for f_raw, d_raw in zip(fechas_raw, dia1_raw):
+                d = _parse_sheet_date_ddmmyy(f_raw)
+                if d is None:
+                    continue
+                if d.year == int(_dt_mes.year) and d.month == int(_dt_mes.month):
+                    if _norm_si(d_raw) == "SI":
+                        count_si += 1
+
+            return int(count_si)
         except Exception:
             return 0
 
+    def _get_ingresos_capacitacion_week_counts_current_month(_service, _start, _end):
+        """Conteos semanales (lunes) de Ingresos en Capacitación, leyendo la hoja del mes actual.
+        Usa:
+          - FECHA DE INGRESO A CAPA: J12:J
+          - DIA 1: L12:L (solo 'SI')
+        Devuelve Series indexada por inicio de semana (lunes).
+        """
+        if not INGRESOS_OPERACION_SHEET_ID:
+            return pd.Series(dtype=int)
 
+        try:
+            sheet_name = f"{mapa_meses[int(mx_now.month)]} {str(int(mx_now.year))[-2:]}"
+            fechas_raw, dia1_raw = _read_capacitacion_fechas_y_dia1(_service, sheet_name)
+
+            fechas_dt = []
+            for v in fechas_raw:
+                d = _parse_sheet_date_ddmmyy(v)
+                fechas_dt.append(d)
+
+            dts = pd.to_datetime(pd.Series(fechas_dt, dtype="datetime64[ns]"), errors="coerce")
+            dia1_s = pd.Series(dia1_raw, dtype="object").apply(_norm_si)
+
+            mask = dts.notna() & dia1_s.eq("SI")
+            d = dts[mask]
+            if d.empty:
+                return pd.Series(dtype=int)
+
+            start = pd.to_datetime(_start, errors="coerce")
+            end   = pd.to_datetime(_end, errors="coerce")
+            if pd.notna(start):
+                d = d[d >= start]
+            if pd.notna(end):
+                d = d[d <= end]
+            if d.empty:
+                return pd.Series(dtype=int)
+
+            week_start = (d.dt.normalize() - pd.to_timedelta(d.dt.weekday, unit="D")).dt.normalize()
+            return week_start.value_counts().sort_index().astype(int)
+        except Exception:
+            return pd.Series(dtype=int)
+
+    def _get_ingresos_capacitacion_daily_counts_current_month(_service, _year, _month):
+        """Conteos diarios (día del mes -> count) de Ingresos en Capacitación, leyendo hoja del mes indicado."""
+        if not INGRESOS_OPERACION_SHEET_ID:
+            return {}
+
+        try:
+            sheet_name = f"{mapa_meses[int(_month)]} {str(int(_year))[-2:]}"
+            fechas_raw, dia1_raw = _read_capacitacion_fechas_y_dia1(_service, sheet_name)
+
+            out = {}
+            for f_raw, d_raw in zip(fechas_raw, dia1_raw):
+                d = _parse_sheet_date_ddmmyy(f_raw)
+                if d is None:
+                    continue
+                if d.year == int(_year) and d.month == int(_month) and _norm_si(d_raw) == "SI":
+                    out[int(d.day)] = int(out.get(int(d.day), 0)) + 1
+
+            return out
+        except Exception:
+            return {}
 
     def _get_ingresos_operacion_week_counts_current_month(_service, _start, _end):
         """
@@ -844,8 +985,9 @@ def index():
             except Exception:
                 asiste_mes = 0
 
-        # Por ahora se deja en 0; después se conectará el cálculo real.
-        ingresos_capacitacion_mes = _get_ingresos_capacitacion_mes(service, dt_mes)  # <-- C5
+        # Ingresos en Capacitación (mismo spreadsheet/hoja que "Ingresos a Operación")
+        ingresos_capacitacion_mes = _get_ingresos_capacitacion_mes(service, dt_mes)
+
         ingresos_operacion_mes = _get_ingresos_operacion_mes(service, dt_mes)        # <-- C6
 
         funnel_datasets.append({
@@ -880,6 +1022,16 @@ def index():
     )
 
 
+    # Ingresos en Capacitación (desde INGRESOS_OPERACION_SHEET_ID -> hoja del mes actual, J/L)
+    _cap_wk_series = _get_ingresos_capacitacion_week_counts_current_month(service, wk_range_start, wk_range_end)
+    ingresos_capacitacion_week_dict = (
+        {pd.to_datetime(k).normalize(): int(v) for k, v in _cap_wk_series.to_dict().items()}
+        if isinstance(_cap_wk_series, pd.Series) and not _cap_wk_series.empty
+        else {}
+    )
+
+
+
     if not data_reclutamiento.empty:
         entrevista_week = (
             data_reclutamiento["entrevista_dt"].dt.normalize()
@@ -909,12 +1061,15 @@ def index():
                     asiste_wk = int(data_reclutamiento.loc[entrevista_week == wk, "bin_asiste_entrevista"].sum())
                 except Exception:
                     asiste_wk = 0
+            # Ingresos en Capacitación (por semana, leyendo hoja de Operación del mes actual - columnas J/L)
+            ingresos_cap_wk = int(ingresos_capacitacion_week_dict.get(wk.normalize(), 0))
 
-            ingresos_wk = int(ingresos_operacion_week_dict.get(wk.normalize(), 0))
+
+            ingresos_op_wk = int(ingresos_operacion_week_dict.get(wk.normalize(), 0))
 
             funnel_datasets_weekly.append({
                 "label": wk_label,
-                "data": [leads_fb_wk, asiste_wk, ingresos_wk],
+                "data": [leads_fb_wk, asiste_wk, ingresos_cap_wk, ingresos_op_wk],
             })
     else:
         # Si no hay datos, aún construye semanas vacías para el selector del modal
@@ -927,7 +1082,7 @@ def index():
             )
             funnel_datasets_weekly.append({
                 "label": wk_label,
-                "data": [0, 0, int(ingresos_operacion_week_dict.get(wk.normalize(), 0))],
+                "data": [0, 0, int(ingresos_capacitacion_week_dict.get(wk.normalize(), 0)), int(ingresos_operacion_week_dict.get(wk.normalize(), 0))],
             })
 
 
@@ -958,19 +1113,15 @@ def index():
                 _daily_ent_f = [0] * len(_day_idx)
         else:
             _daily_ent_f = [0] * len(_day_idx)
+        # Ingresos en Capacitación por día (leyendo hoja de Operación del mes actual - columnas J/L)
+        _cap_daily_dict = _get_ingresos_capacitacion_daily_counts_current_month(service, _cur_y, _cur_m)
+        _daily_cap_f = [int(_cap_daily_dict.get(d, 0)) for d in _day_idx]
 
-        # Ingresos capacitación por día (fecha_de_capacitacion)
-        if "fecha_de_capacitacion" in data_reclutamiento.columns:
-            _cap = data_reclutamiento["fecha_de_capacitacion"]
-            _mc = (_cap.dt.year == _cur_y) & (_cap.dt.month == _cur_m)
-            _dc_s = _cap[_mc].dt.day.value_counts()
-            _daily_cap_f = [int(_dc_s.get(d, 0)) for d in _day_idx]
-        else:
-            _daily_cap_f = [0] * len(_day_idx)
     else:
         _daily_leads_f = [0] * len(_day_idx)
         _daily_ent_f   = [0] * len(_day_idx)
-        _daily_cap_f   = [0] * len(_day_idx)
+        _cap_daily_dict = _get_ingresos_capacitacion_daily_counts_current_month(service, _cur_y, _cur_m)
+        _daily_cap_f = [int(_cap_daily_dict.get(d, 0)) for d in _day_idx]
 
     # Ingresos operación por día (desde hoja de operaciones)
     _ops_daily = _get_ingresos_operacion_daily_counts_current_month(service, _cur_y, _cur_m)
