@@ -2286,7 +2286,7 @@ const valueLabelPluginIB = {
               if (!chart.isDatasetVisible(datasetIndex)) return;
               const meta = chart.getDatasetMeta(datasetIndex);
               meta.data.forEach((point, i) => {
-                if (i % 3 !== 0) return;
+                //if (i % 3 !== 0) return;
                 const val = dataset.data[i];
                 if (val == null || isNaN(val)) return;
                 const x = point.x;
