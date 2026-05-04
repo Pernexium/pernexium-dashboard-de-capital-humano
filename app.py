@@ -272,6 +272,31 @@ def index():
     if historico_year_selected > _current_year:
         historico_year_selected = _current_year
 
+    # Filtro para el gráfico histórico - selector de MES (opcional)
+    # Valor: 1..12 -> muestra acumulado diario de ese mes/año
+    # Valor: 0 / vacío -> modo año completo (acumulado semanal)
+    _historico_month_raw = request.args.get(
+        "historico_month",
+        default="",
+        type=str
+    ).strip()
+
+    try:
+        historico_month_selected = int(_historico_month_raw) if _historico_month_raw else 0
+    except Exception:
+        historico_month_selected = 0
+
+    if historico_month_selected < 1 or historico_month_selected > 12:
+        historico_month_selected = 0
+
+    # Si el año seleccionado es el actual, sólo permitir meses hasta el mes en curso
+    if (
+        historico_month_selected > 0
+        and int(historico_year_selected) == _current_year
+        and historico_month_selected > int(mx_now.month)
+    ):
+        historico_month_selected = 0
+
 
 
     service = build_sheets_service()
@@ -1411,7 +1436,7 @@ def index():
         _, dbajas          = _daily_counts_for_month(bajas_baja_dates_validas, y, m)
         ingresos_bajas_daily[str(i)] = {"labels": dlabels, "ingresos": dingresos, "bajas": dbajas}
 
-    # === Histórico (Acumulado semanal por año seleccionado) ===
+    # === Histórico (Acumulado semanal por año seleccionado o diario por mes) ===
     historico_year_start = pd.Timestamp(int(historico_year_selected), 1, 1)
     if int(historico_year_selected) == int(mx_now.year):
         historico_year_end = RANGE_END
@@ -1420,20 +1445,63 @@ def index():
         historico_year_end = pd.Timestamp(int(historico_year_selected), 12, 31, 23, 59, 59, 999999)
         historico_periodo_text = f"{int(historico_year_selected)} (enero - diciembre)"
 
-    ingresos_week_year = _weekly_counts_for_year(ingresos_todos, historico_year_start, historico_year_end)
-    bajas_week_year    = _weekly_counts_for_year(bajas_baja_dates_validas, historico_year_start, historico_year_end)
+    if historico_month_selected and historico_month_selected > 0:
+        # === MODO MES: acumulado DIARIO del mes/año seleccionado ===
+        _y = int(historico_year_selected)
+        _m = int(historico_month_selected)
+        _days_in_month = calendar.monthrange(_y, _m)[1]
 
-    week_cum_index      = ingresos_week_year.index
-    week_cum_labels     = [pd.to_datetime(w).strftime("%d/%m/%y") for w in week_cum_index]
-    week_cum_month_nums = [int(pd.to_datetime(w).month) for w in week_cum_index]
+        # Si es el mes en curso, sólo hasta el día de hoy; si no, hasta fin de mes
+        if _y == int(mx_now.year) and _m == int(mx_now.month):
+            _last_day = int(mx_now.day)
+        else:
+            _last_day = _days_in_month
 
-    df_semana_cum = pd.DataFrame({
-        "SemanaLabel": week_cum_labels,
-        "Ingresos": ingresos_week_year.values,
-        "Bajas": bajas_week_year.reindex(week_cum_index, fill_value=0).values,
-    })
-    df_semana_cum["Ingresos acumulados"] = df_semana_cum["Ingresos"].cumsum()
-    df_semana_cum["Bajas acumuladas"]    = df_semana_cum["Bajas"].cumsum()
+        # Conteos diarios para ingresos y bajas (devuelven todo el mes)
+        _all_dlabels, _all_dingresos = _daily_counts_for_month(ingresos_todos, _y, _m)
+        _, _all_dbajas               = _daily_counts_for_month(bajas_baja_dates_validas, _y, _m)
+
+        # Recorte hasta el último día válido
+        _dlabels   = _all_dlabels[:_last_day]
+        _dingresos = _all_dingresos[:_last_day]
+        _dbajas    = _all_dbajas[:_last_day]
+
+        week_cum_index      = pd.Index(range(1, _last_day + 1))
+        week_cum_labels     = _dlabels
+        week_cum_month_nums = [_m] * _last_day
+
+        df_semana_cum = pd.DataFrame({
+            "SemanaLabel": week_cum_labels,
+            "Ingresos": _dingresos,
+            "Bajas": _dbajas,
+        })
+        df_semana_cum["Ingresos acumulados"] = df_semana_cum["Ingresos"].cumsum()
+        df_semana_cum["Bajas acumuladas"]    = df_semana_cum["Bajas"].cumsum()
+
+        _MESES_LARGOS = [
+            'Enero','Febrero','Marzo','Abril','Mayo','Junio',
+            'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'
+        ]
+        if _y == int(mx_now.year) and _m == int(mx_now.month):
+            historico_periodo_text = f"{_MESES_LARGOS[_m - 1]} {_y} (al {mx_now.strftime('%d/%m/%Y')})"
+        else:
+            historico_periodo_text = f"{_MESES_LARGOS[_m - 1]} {_y} (acumulado diario)"
+    else:
+        # === MODO AÑO: acumulado SEMANAL del año seleccionado (comportamiento original) ===
+        ingresos_week_year = _weekly_counts_for_year(ingresos_todos, historico_year_start, historico_year_end)
+        bajas_week_year    = _weekly_counts_for_year(bajas_baja_dates_validas, historico_year_start, historico_year_end)
+
+        week_cum_index      = ingresos_week_year.index
+        week_cum_labels     = [pd.to_datetime(w).strftime("%d/%m/%y") for w in week_cum_index]
+        week_cum_month_nums = [int(pd.to_datetime(w).month) for w in week_cum_index]
+
+        df_semana_cum = pd.DataFrame({
+            "SemanaLabel": week_cum_labels,
+            "Ingresos": ingresos_week_year.values,
+            "Bajas": bajas_week_year.reindex(week_cum_index, fill_value=0).values,
+        })
+        df_semana_cum["Ingresos acumulados"] = df_semana_cum["Ingresos"].cumsum()
+        df_semana_cum["Bajas acumuladas"]    = df_semana_cum["Bajas"].cumsum()
 
     # Lista de años disponibles para el selector (basado en los datos, más el año actual)
     _all_years_series = pd.concat([
@@ -1441,6 +1509,20 @@ def index():
         pd.to_datetime(bajas_baja_dates_validas, errors="coerce"),
     ], ignore_index=True).dt.year.dropna().astype(int)
     historico_years = sorted(set(_all_years_series.tolist() + [int(_current_year)]), reverse=True)
+
+    # Lista de meses disponibles para el selector según el año seleccionado
+    _MESES_LARGOS_LIST = [
+        'Enero','Febrero','Marzo','Abril','Mayo','Junio',
+        'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'
+    ]
+    if int(historico_year_selected) == int(mx_now.year):
+        _max_month_available = int(mx_now.month)
+    else:
+        _max_month_available = 12
+    historico_months = [
+        {"num": i, "nombre": _MESES_LARGOS_LIST[i - 1]}
+        for i in range(1, _max_month_available + 1)
+    ]
 
     # Etiqueta de periodo para UI
     ingresos_bajas_periodo = f"{meses_labels_12[0]} - {meses_labels_12[-1]}"
@@ -1800,6 +1882,8 @@ def index():
         ingresos_bajas_cum_week_month_numbers=week_cum_month_nums,
         historico_years=historico_years,
         historico_year_selected=historico_year_selected,
+        historico_months=historico_months,
+        historico_month_selected=historico_month_selected,
         historico_periodo_text=historico_periodo_text,
         # Leads por reclutador
         leads_labels=etiquetas_leads,
