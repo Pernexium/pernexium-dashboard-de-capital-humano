@@ -266,6 +266,9 @@
       <form method="GET" class="flex items-center">
         
         <input type="hidden" name="historico_year" value="{{ historico_year_selected }}">
+        {% if historico_month_selected %}
+        <input type="hidden" name="historico_month" value="{{ historico_month_selected }}">
+        {% endif %}
 <label for="campania-select" class="sr-only">Campaña</label>
 
         <div class="relative inline-block w-auto min-w-[90px]">
@@ -697,6 +700,18 @@
               >
                 {% for y in historico_years %}
                   <option value="{{ y }}" {% if y == historico_year_selected %}selected{% endif %}>{{ y }}</option>
+                {% endfor %}
+              </select>
+
+              <label for="historicoMonthSelect" class="text-xs text-slate-500 ml-2">Mes</label>
+              <select
+                id="historicoMonthSelect"
+                class="text-xs rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-700
+                       focus:outline-none focus:ring-2 focus:ring-slate-300"
+              >
+                <option value="" {% if not historico_month_selected %}selected{% endif %}>Todo el año</option>
+                {% for m in historico_months %}
+                  <option value="{{ m.num }}" {% if m.num == historico_month_selected %}selected{% endif %}>{{ m.nombre }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -1194,6 +1209,23 @@
           const y = String(e.target.value || '').trim();
           const url = new URL(window.location.href);
           if (y) url.searchParams.set('historico_year', y);
+          // Al cambiar el año, reseteamos el mes (los meses dependen del año)
+          url.searchParams.delete('historico_month');
+          window.location.href = url.toString();
+        });
+      }
+
+      // === Selector de mes para Histórico (acumulado diario del mes) ===
+      const historicoMonthSelect = document.getElementById('historicoMonthSelect');
+      if (historicoMonthSelect) {
+        historicoMonthSelect.addEventListener('change', (e) => {
+          const m = String(e.target.value || '').trim();
+          const url = new URL(window.location.href);
+          if (m) {
+            url.searchParams.set('historico_month', m);
+          } else {
+            url.searchParams.delete('historico_month');
+          }
           window.location.href = url.toString();
         });
       }
